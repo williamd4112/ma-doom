@@ -179,7 +179,7 @@ class Runner(object):
 def learn(policy, env, seed, nsteps=5, nstack=4, nplayers=2, 
         total_timesteps=int(80e6), vf_coef=0.5, ent_coef=0.01, 
         max_grad_norm=0.5, lr=7e-4, lrschedule='linear', 
-        epsilon=1e-5, alpha=0.99, gamma=0.99, log_interval=100):
+        epsilon=1e-5, alpha=0.99, gamma=0.99, log_interval=4):
     tf.reset_default_graph()
     set_global_seeds(seed)
 
@@ -214,6 +214,8 @@ def learn(policy, env, seed, nsteps=5, nstack=4, nplayers=2,
                 logger.record_tabular("policy_entropy_%d" % i, float(policy_entropy[i]))
                 logger.record_tabular("value_loss_%d" % i, float(value_loss[i]))
                 logger.record_tabular("explained_variance_%d" % i, float(ev))
+                logger.record_tabular("mean_reward_%d" % i, float(np.mean(rewards[:, i])))
+                logger.record_tabular("max_reward_%d" % i, float(np.max(rewards[:, i])))
             logger.dump_tabular()
     env.close()
 
