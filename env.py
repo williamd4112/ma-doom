@@ -1,12 +1,17 @@
 from vizdoom_map.ma_doom_env import DoomSyncMultiPlayerEnvironment
 import numpy as np
 import random
+import time
 
 from collections import deque
 import gym
 from gym import error, spaces
 
 import cv2
+
+from multiprocessing import Lock
+
+DOOM_ENV_LOCK = Lock()
 
 class MockGymDoomSyncMultiPlayerEnvironment(gym.Env):
     metadata = {'render.modes': ['human', 'rgb_array']}
@@ -42,7 +47,9 @@ class GymDoomSyncMultiPlayerEnvironment(gym.Env):
     
     def __init__(self, config, num_players):
         self.num_players = num_players
-        self.doom_env = DoomSyncMultiPlayerEnvironment(config, num_players) 
+        with DOOM_ENV_LOCK:
+            self.doom_env = DoomSyncMultiPlayerEnvironment(config, num_players) 
+            time.sleep(2) 
         
         # Get action space from first environment
         # For now, we assume each agent has the same action space
@@ -124,7 +131,7 @@ class NdarrayEnv(gym.Wrapper):
         return self._state_to_ndarray(states)
 
 def wrap_ma_doom(config, nplayers):
-    env = MockGymDoomSyncMultiPlayerEnvironment(config, nplayers)
+    env = GymDoomSyncMultiPlayerEnvironment(config, nplayers)
     env = WarpFrame(env)
     env = NdarrayEnv(env)
     env = MaxAndSkipEnv(env, nplayers)

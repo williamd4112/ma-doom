@@ -203,13 +203,13 @@ def learn(policy, env, seed, nsteps=5, nstack=4, nplayers=2,
         nseconds = time.time()-tstart
         fps = int((update*nbatch)/nseconds)
         if update % log_interval == 0 or update == 1:
+            logger.record_tabular("nupdates", update)
+            logger.record_tabular("total_timesteps", update*nbatch)
+            logger.record_tabular("fps", fps)
             for i in range(nplayers):
                 ev = explained_variance(values[:, i], rewards[:, i])
-                logger.record_tabular("nupdates", update)
-                logger.record_tabular("total_timesteps", update*nbatch)
-                logger.record_tabular("fps", fps)
-                logger.record_tabular("policy_entropy", float(policy_entropy[i]))
-                logger.record_tabular("value_loss", float(value_loss[i]))
+                logger.record_tabular("policy_entropy_%d" % i, float(policy_entropy[i]))
+                logger.record_tabular("value_loss_%d" % i, float(value_loss[i]))
                 logger.record_tabular("explained_variance_%d" % i, float(ev))
             logger.dump_tabular()
     env.close()
