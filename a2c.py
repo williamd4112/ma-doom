@@ -13,12 +13,11 @@ from baselines.common.atari_wrappers import wrap_deepmind
 
 from baselines.a2c.utils import discount_with_dones
 from baselines.a2c.utils import Scheduler, make_path, find_trainable_variables
-from baselines.a2c.policies import CnnPolicy
 from baselines.a2c.utils import cat_entropy, mse
 
 class Model(object):
 
-    def __init__(self, policy, ob_space, ac_space, nenvs, nsteps, nstack, num_procs,
+    def __init__(self, policy, ob_space, ac_space, nenvs, nsteps, nstack, num_procs, nplayers,
             ent_coef=0.01, vf_coef=0.5, max_grad_norm=0.5, lr=7e-4,
             alpha=0.99, epsilon=1e-5, total_timesteps=int(80e6), lrschedule='linear'):
         config = tf.ConfigProto(allow_soft_placement=True,
@@ -29,19 +28,33 @@ class Model(object):
         nact = ac_space.n
         nbatch = nenvs*nsteps
 
-        A = tf.placeholder(tf.int32, [nbatch])
-        ADV = tf.placeholder(tf.float32, [nbatch])
-        R = tf.placeholder(tf.float32, [nbatch])
+        A = tf.placeholder(tf.int32, [nbatch, nplayers])
+        ADV = tf.placeholder(tf.float32, [nbatch, nplayers])
+        R = tf.placeholder(tf.float32, [nbatch, nplayers])
         LR = tf.placeholder(tf.float32, [])
 
-        step_model = policy(sess, ob_space, ac_space, nenvs, 1, nstack, reuse=False)
-        train_model = policy(sess, ob_space, ac_space, nenvs, nsteps, nstack, reuse=True)
-
-        neglogpac = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=train_model.pi, labels=A)
-        pg_loss = tf.reduce_mean(ADV * neglogpac)
-        vf_loss = tf.reduce_mean(mse(tf.squeeze(train_model.vf), R))
-        entropy = tf.reduce_mean(cat_entropy(train_model.pi))
-        loss = pg_loss - entropy*ent_coef + vf_loss * vf_coef
+        step_model = policy(sess, ob_space, ac_space, nenvs, 1, nstack, nplayers, reuse=False)
+        train_model = policy(sess, ob_space, ac_space, nenvs, nsteps, nstack, nplayers, reuse=True)
+        
+        # Calculate multiplayer loss
+        pg_losses = []
+        vf_losses = []
+        entropies = []
+        losses = []
+        for i in range(nplayers):
+            neglogpac = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=train_model.pi[i], labels=A[:, i])
+            pg_loss = tf.reduce_mean(ADV[:, i] * neglogpac)
+            vf_loss = tf.reduce_mean(mse(tf.squeeze(train_model.vf[i]), R[:, i]))
+            entropy = tf.reduce_mean(cat_entropy(train_model.pi[i]))
+            loss = pg_loss - entropy*ent_coef + vf_loss * vf_coef
+            pg_losses.append(pg_loss)
+            vf_loss.append(vf_loss)
+            entropies.append(entropy)
+            losses.append(loss)
+        pg_loss = tf.tuple(pg_losses)
+        vf_loss = tf.tuple(vf_losses)
+        entropy = tf.tuple(entropies)
+        loss = tf.add_n(losses)
 
         params = find_trainable_variables("model")
         grads = tf.gradients(loss, params)
@@ -91,13 +104,14 @@ class Model(object):
 
 class Runner(object):
 
-    def __init__(self, env, model, nsteps=5, nstack=4, gamma=0.99):
+    def __init__(self, env, model, nsteps=5, nstack=4, nplayers=2, gamma=0.99):
         self.env = env
         self.model = model
+        self.nplayers = nplayers
         nh, nw, nc = env.observation_space.shape
         nenv = env.num_envs
-        self.batch_ob_shape = (nenv*nsteps, nh, nw, nc*nstack)
-        self.obs = np.zeros((nenv, nh, nw, nc*nstack), dtype=np.uint8)
+        self.batch_ob_shape = (nenv*nsteps, nplayers, nh, nw, nc*nstack)
+        self.obs = np.zeros((nenv, nplayers, nh, nw, nc*nstack), dtype=np.uint8)
         obs = env.reset()
         self.update_obs(obs)
         self.gamma = gamma
@@ -108,8 +122,9 @@ class Runner(object):
     def update_obs(self, obs):
         # Do frame-stacking here instead of the FrameStack wrapper to reduce
         # IPC overhead
-        self.obs = np.roll(self.obs, shift=-1, axis=3)
-        self.obs[:, :, :, -1] = obs[:, :, :, 0]
+        # obs is [nenv, nplayers, h, w, c*hist_len]
+        self.obs = np.roll(self.obs, shift=-1, axis=4)
+        self.obs[:, :, :, :, -1] = obs[:, :, :, :, 0]
 
     def run(self):
         mb_obs, mb_rewards, mb_actions, mb_values, mb_dones = [],[],[],[],[]
@@ -153,7 +168,10 @@ class Runner(object):
         mb_masks = mb_masks.flatten()
         return mb_obs, mb_states, mb_rewards, mb_masks, mb_actions, mb_values
 
-def learn(policy, env, seed, nsteps=5, nstack=4, total_timesteps=int(80e6), vf_coef=0.5, ent_coef=0.01, max_grad_norm=0.5, lr=7e-4, lrschedule='linear', epsilon=1e-5, alpha=0.99, gamma=0.99, log_interval=100):
+def learn(policy, env, seed, nsteps=5, nstack=4, nplayers=2, 
+        total_timesteps=int(80e6), vf_coef=0.5, ent_coef=0.01, 
+        max_grad_norm=0.5, lr=7e-4, lrschedule='linear', 
+        epsilon=1e-5, alpha=0.99, gamma=0.99, log_interval=100):
     tf.reset_default_graph()
     set_global_seeds(seed)
 
@@ -161,15 +179,23 @@ def learn(policy, env, seed, nsteps=5, nstack=4, total_timesteps=int(80e6), vf_c
     ob_space = env.observation_space
     ac_space = env.action_space
     num_procs = len(env.remotes) # HACK
-    model = Model(policy=policy, ob_space=ob_space, ac_space=ac_space, nenvs=nenvs, nsteps=nsteps, nstack=nstack, num_procs=num_procs, ent_coef=ent_coef, vf_coef=vf_coef,
-        max_grad_norm=max_grad_norm, lr=lr, alpha=alpha, epsilon=epsilon, total_timesteps=total_timesteps, lrschedule=lrschedule)
+    model = Model(policy=policy, ob_space=ob_space, ac_space=ac_space, 
+                nenvs=nenvs, nsteps=nsteps, nstack=nstack, 
+                num_procs=num_procs, nplayers=nplayers, 
+                ent_coef=ent_coef, vf_coef=vf_coef,
+                max_grad_norm=max_grad_norm, lr=lr, 
+                alpha=alpha, epsilon=epsilon, 
+                total_timesteps=total_timesteps, lrschedule=lrschedule)
     runner = Runner(env, model, nsteps=nsteps, nstack=nstack, gamma=gamma)
 
     nbatch = nenvs*nsteps
     tstart = time.time()
     for update in range(1, total_timesteps//nbatch+1):
+        # Collect batch of samples
         obs, states, rewards, masks, actions, values = runner.run()
+        # Train on batch
         policy_loss, value_loss, policy_entropy = model.train(obs, states, rewards, masks, actions, values)
+
         nseconds = time.time()-tstart
         fps = int((update*nbatch)/nseconds)
         if update % log_interval == 0 or update == 1:
