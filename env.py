@@ -12,7 +12,7 @@ import cv2
 class MockGymDoomSyncMultiPlayerEnvironment(gym.Env):
     metadata = {'render.modes': ['human', 'rgb_array']}
     
-    def __init__(self, config, num_players):
+    def __init__(self, config, num_players, port):
         self.num_players = num_players
         #self.doom_env = DoomSyncMultiPlayerEnvironment(config, num_players) 
         

@@ -108,23 +108,26 @@ class Runner(object):
         self.env = env
         self.model = model
         self.nplayers = nplayers
-        nh, nw, nc = env.observation_space.shape
+
+        self.obs_shape = env.observation_space.shape
+        nh, nw, nc = self.obs_shape
+        
         nenv = env.num_envs
+
         self.batch_ob_shape = (nenv*nsteps, nplayers, nh, nw, nc*nstack)
         self.obs = np.zeros((nenv, nplayers, nh, nw, nc*nstack), dtype=np.uint8)
+
         obs = env.reset()
         self.update_obs(obs)
         self.gamma = gamma
         self.nsteps = nsteps
         self.states = model.initial_state
         self.dones = [False for _ in range(nenv)]
-
+ 
     def update_obs(self, obs):
-        # Do frame-stacking here instead of the FrameStack wrapper to reduce
-        # IPC overhead
-        # obs is [nenv, nplayers, h, w, c*hist_len]
-        self.obs = np.roll(self.obs, shift=-1, axis=4)
-        self.obs[:, :, :, :, -1] = obs[:, :, :, :, 0]
+        nc = self.obs_shape[-1]
+        self.obs = np.roll(self.obs, shift=-nc, axis=4)
+        self.obs[:, :, :, :, -nc:] = obs
 
     def run(self):
         mb_obs, mb_rewards, mb_actions, mb_values, mb_dones = [],[],[],[],[]
