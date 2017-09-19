@@ -5,29 +5,27 @@ from baselines.common import set_global_seeds
 from baselines import bench
 from baselines.a2c.a2c import learn
 from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
-from baselines.common.atari_wrappers import wrap_deepmind
-from baselines.a2c.policies import CnnPolicy, LstmPolicy, LnLstmPolicy
+# from baselines.common.atari_wrappers import wrap_deepmind
+from env import wrap_ma_doom
+# from baselines.a2c.policies import CnnPolicy, LstmPolicy, LnLstmPolicy
+from baselines.a2c.policies import MACnnPolicy
 
 def train(env_id, num_frames, seed, policy, lrschedule, num_cpu):
     num_timesteps = int(num_frames / 4 * 1.1) 
     # divide by 4 due to frameskip, then do a little extras so episodes end
     def make_env(rank):
         def _thunk():
-            env = gym.make(env_id)
-            env.seed(seed + rank)
-            env = bench.Monitor(env, logger.get_dir() and 
-                os.path.join(logger.get_dir(), "{}.monitor.json".format(rank)))
             gym.logger.setLevel(logging.WARN)
-            return wrap_deepmind(env)
+            return wrap_ma_doom()
         return _thunk
     set_global_seeds(seed)
     env = SubprocVecEnv([make_env(i) for i in range(num_cpu)])
     if policy == 'cnn':
-        policy_fn = CnnPolicy
+        policy_fn = MACnnPolicy
     elif policy == 'lstm':
-        policy_fn = LstmPolicy
+        raise NotImplemented
     elif policy == 'lnlstm':
-        policy_fn = LnLstmPolicy
+        raise NotImplemented
     learn(policy_fn, env, seed, total_timesteps=num_timesteps, lrschedule=lrschedule)
     env.close()
 

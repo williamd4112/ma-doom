@@ -169,15 +169,21 @@ class MACnnPolicy(object):
 
         def step(ob, *_args, **_kwargs):
             a, v = sess.run([a0, v0], {X:ob})
-            return a, v, [] #dummy state
+            return np.stack(a, axis=1), np.stack(v, axis=1), [] #dummy state
 
         def value(ob, *_args, **_kwargs):
-            return sess.run(v0, {X:ob})
-
+            v = sess.run(v0, {X:ob})
+            return np.stack(v, axis=1)
+        
+        # X is [nbatch, nplayer, h, w, c*hist_len]
         self.X = X
+        # pi is [[nbatch, nact]] * nplayers
         self.pi = pis
+        # vf is [[nbatch, 1]] * nplayers
         self.vf = vfs
+        # step return is [(a)[nbatch,] * nplayers, (v)[nbatch,] * nplayers, []]
         self.step = step
+        # value return is [(v)[nbatch,] * nplayers, []]
         self.value = value
        
 
@@ -194,7 +200,11 @@ if __name__ == '__main__':
         print(model.vf)
 
         rets = (model.step(np.random.rand(32, 2, 84, 84, 12)))
-        for a in rets[0]:
-            print(a)
-        for v in rets[1]:
-            print(v) 
+        #for a in rets[0]:
+        #    print(a)
+        #for v in rets[1]:
+        #    print(v) 
+        print(rets[0].shape)
+        print(rets[1].shape)
+        rets = (model.value(np.random.rand(32, 2, 84, 84, 12)))
+        print(rets.shape)
