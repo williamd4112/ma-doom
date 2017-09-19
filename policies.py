@@ -121,3 +121,80 @@ class CnnPolicy(object):
         self.vf = vf
         self.step = step
         self.value = value
+
+class MACnnPolicy(object):
+    def __init__(self, sess, ob_space, ac_space, nenv, nsteps, nstack, nplayers, reuse=False):
+        nbatch = nenv * nsteps
+        nh, nw, nc = ob_space.shape
+        ob_shape = (nbatch, nplayers, nh, nw, nc*nstack)
+        nact = ac_space.n
+        X = tf.placeholder(tf.uint8, ob_shape) #obs
+        
+        # Communication phase
+        encs = []
+        h4s = []
+        for i in range(nplayers):
+            x = X[:, i, ::]
+            with tf.variable_scope("model_%d" % i, reuse=reuse):
+                h = conv(tf.cast(x, tf.float32)/255., 'c1', nf=32, rf=8, stride=4, init_scale=np.sqrt(2))
+                h2 = conv(h, 'c2', nf=64, rf=4, stride=2, init_scale=np.sqrt(2))
+                h3 = conv(h2, 'c3', nf=64, rf=3, stride=1, init_scale=np.sqrt(2))
+                h3 = conv_to_fc(h3)
+                h4 = fc(h3, 'fc1', nh=512, init_scale=np.sqrt(2))
+                # Encode visual features to communication message (512 -> 128)
+                enc = fc(h4, 'fc1-enc', nh=128, act=tf.nn.relu)
+            encs.append(enc)
+            h4s.append(h4)
+        # Policy phase
+        pis = []
+        vfs = []
+        for i in range(nplayers):
+            comm = [ e for j, e in enumerate(encs) if i != j]
+            comm = tf.add_n(comm) / (nplayers - 1)
+            h4 = h4s[i]
+            with tf.variable_scope("model_%d" % i, reuse=reuse):
+                # Decode communication message to features (128 -> 512)
+                dec = fc(comm, 'fc1-dec', nh=512, act=tf.nn.relu)
+                # Policy and Value function
+                merge = tf.multiply(h4, dec)
+                pi = fc(merge, 'pi', nact, act=lambda x:x)
+                vf = fc(merge, 'v', 1, act=lambda x:x)
+            pis.append(pi)
+            vfs.append(vf)
+
+        v0 = tf.tuple([ vf[:, 0] for vf in vfs ])
+        a0 = tf.tuple([ sample(pi) for pi in pis ])
+        
+        self.initial_state = [] #not statefu
+
+        def step(ob, *_args, **_kwargs):
+            a, v = sess.run([a0, v0], {X:ob})
+            return a, v, [] #dummy state
+
+        def value(ob, *_args, **_kwargs):
+            return sess.run(v0, {X:ob})
+
+        self.X = X
+        self.pi = pis
+        self.vf = vfs
+        self.step = step
+        self.value = value
+       
+
+if __name__ == '__main__':
+    from gym import error, spaces
+    X = tf.placeholder(tf.uint8, (32, 2, 84, 84, 12))
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True
+
+    with tf.Session(config=config) as sess:
+        model = MACnnPolicy(sess, spaces.Box(low=0, high=255, shape=(84, 84, 3)), spaces.Discrete(3), 8, 4, 4, 2)
+        tf.global_variables_initializer().run(session=sess)
+        print(model.pi)
+        print(model.vf)
+
+        rets = (model.step(np.random.rand(32, 2, 84, 84, 12)))
+        for a in rets[0]:
+            print(a)
+        for v in rets[1]:
+            print(v) 
