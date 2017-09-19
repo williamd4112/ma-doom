@@ -11,9 +11,9 @@ from baselines.common import set_global_seeds, explained_variance
 from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
 from baselines.common.atari_wrappers import wrap_deepmind
 
-from baselines.a2c.utils import discount_with_dones
-from baselines.a2c.utils import Scheduler, make_path, find_trainable_variables
-from baselines.a2c.utils import cat_entropy, mse
+from utils import discount_with_dones
+from utils import Scheduler, make_path, find_trainable_variables
+from utils import cat_entropy, mse
 
 class Model(object):
 
@@ -48,7 +48,7 @@ class Model(object):
             entropy = tf.reduce_mean(cat_entropy(train_model.pi[i]))
             loss = pg_loss - entropy*ent_coef + vf_loss * vf_coef
             pg_losses.append(pg_loss)
-            vf_loss.append(vf_loss)
+            vf_losses.append(vf_loss)
             entropies.append(entropy)
             losses.append(loss)
         pg_loss = tf.tuple(pg_losses)
@@ -158,13 +158,18 @@ class Runner(object):
             rewards = rewards.tolist()
             dones = dones.tolist()
             if dones[-1] == 0:
-                rewards = discount_with_dones(rewards+[value], dones+[0], self.gamma)[:-1]
+                rewards = discount_with_dones(np.asarray(rewards+[value]), dones+[0], self.gamma)[:-1]
             else:
-                rewards = discount_with_dones(rewards, dones, self.gamma)
+                rewards = discount_with_dones(np.asarray(rewards), dones, self.gamma)
             mb_rewards[n] = rewards
-        mb_rewards = mb_rewards.flatten()
-        mb_actions = mb_actions.flatten()
-        mb_values = mb_values.flatten()
+
+        def _flatten(arr):
+            shape = arr.shape
+            return arr.reshape([shape[0]*shape[1], -1])
+
+        mb_rewards = _flatten(mb_rewards)
+        mb_actions = _flatten(mb_actions)
+        mb_values = _flatten(mb_values)
         mb_masks = mb_masks.flatten()
         return mb_obs, mb_states, mb_rewards, mb_masks, mb_actions, mb_values
 
@@ -195,17 +200,17 @@ def learn(policy, env, seed, nsteps=5, nstack=4, nplayers=2,
         obs, states, rewards, masks, actions, values = runner.run()
         # Train on batch
         policy_loss, value_loss, policy_entropy = model.train(obs, states, rewards, masks, actions, values)
-
         nseconds = time.time()-tstart
         fps = int((update*nbatch)/nseconds)
         if update % log_interval == 0 or update == 1:
-            ev = explained_variance(values, rewards)
-            logger.record_tabular("nupdates", update)
-            logger.record_tabular("total_timesteps", update*nbatch)
-            logger.record_tabular("fps", fps)
-            logger.record_tabular("policy_entropy", float(policy_entropy))
-            logger.record_tabular("value_loss", float(value_loss))
-            logger.record_tabular("explained_variance", float(ev))
+            for i in range(nplayers):
+                ev = explained_variance(values[:, i], rewards[:, i])
+                logger.record_tabular("nupdates", update)
+                logger.record_tabular("total_timesteps", update*nbatch)
+                logger.record_tabular("fps", fps)
+                logger.record_tabular("policy_entropy", float(policy_entropy[i]))
+                logger.record_tabular("value_loss", float(value_loss[i]))
+                logger.record_tabular("explained_variance_%d" % i, float(ev))
             logger.dump_tabular()
     env.close()
 

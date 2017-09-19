@@ -1,11 +1,41 @@
 from vizdoom_map.ma_doom_env import DoomSyncMultiPlayerEnvironment
 import numpy as np
+import random
 
 from collections import deque
 import gym
 from gym import error, spaces
 
 import cv2
+
+class MockGymDoomSyncMultiPlayerEnvironment(gym.Env):
+    metadata = {'render.modes': ['human', 'rgb_array']}
+    
+    def __init__(self, config, num_players):
+        self.num_players = num_players
+        #self.doom_env = DoomSyncMultiPlayerEnvironment(config, num_players) 
+        
+        # Get action space from first environment
+        # For now, we assume each agent has the same action space
+        self.action_space = spaces.Discrete(5)
+       
+        # Get observation space from first environment
+        # For now, we assume observation shape is fixed as (320, 240)
+        self.observation_space = spaces.Box(low=0, high=255, shape=(320, 240, 3))
+    
+    def _reset(self):
+        #self.doom_env.reset()
+        return [ np.random.rand(*[320, 240, 3]) ] * self.num_players
+
+    def _step(self, a):
+        info = {}
+        #rewards, done = self.doom_env.step(a)
+        rewards = [ np.random.rand() ] * self.num_players
+        done = random.choice([True, False])
+        #next_states = self.doom_env.current_state()
+        next_states = [ np.random.rand(*[320, 240, 3]) ] * self.num_players
+
+        return next_states, rewards, done, info
 
 class GymDoomSyncMultiPlayerEnvironment(gym.Env):
     metadata = {'render.modes': ['human', 'rgb_array']}
@@ -94,7 +124,7 @@ class NdarrayEnv(gym.Wrapper):
         return self._state_to_ndarray(states)
 
 def wrap_ma_doom(config, nplayers):
-    env = GymDoomSyncMultiPlayerEnvironment(config, nplayers)
+    env = MockGymDoomSyncMultiPlayerEnvironment(config, nplayers)
     env = WarpFrame(env)
     env = NdarrayEnv(env)
     env = MaxAndSkipEnv(env, nplayers)

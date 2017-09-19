@@ -42,7 +42,7 @@ def main():
         'This number gets divided by 4 due to frameskip', type=int, default=40)
     args = parser.parse_args()
     train(args.config, num_frames=1e6 * args.million_frames, seed=args.seed, 
-        policy=args.policy, lrschedule=args.lrschedule, num_cpu=4)
+        policy=args.policy, lrschedule=args.lrschedule, num_cpu=2)
 
 if __name__ == '__main__':
     main()
