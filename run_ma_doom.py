@@ -17,8 +17,9 @@ def train(config, num_frames, seed, policy, lrschedule, num_cpu):
     # divide by 4 due to frameskip, then do a little extras so episodes end
     def make_env(rank):
         def _thunk():
+            port = rank + 8000
             gym.logger.setLevel(logging.WARN)
-            return wrap_ma_doom(config, NUM_PLAYERS)
+            return wrap_ma_doom(config, NUM_PLAYERS, port)
         return _thunk
     set_global_seeds(seed)
     env = SubprocVecEnv([make_env(i) for i in range(num_cpu)])
@@ -42,7 +43,7 @@ def main():
         'This number gets divided by 4 due to frameskip', type=int, default=40)
     args = parser.parse_args()
     train(args.config, num_frames=1e6 * args.million_frames, seed=args.seed, 
-        policy=args.policy, lrschedule=args.lrschedule, num_cpu=2)
+        policy=args.policy, lrschedule=args.lrschedule, num_cpu=8)
 
 if __name__ == '__main__':
     main()

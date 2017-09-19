@@ -9,10 +9,6 @@ from gym import error, spaces
 
 import cv2
 
-from multiprocessing import Lock
-
-DOOM_ENV_LOCK = Lock()
-
 class MockGymDoomSyncMultiPlayerEnvironment(gym.Env):
     metadata = {'render.modes': ['human', 'rgb_array']}
     
@@ -45,11 +41,9 @@ class MockGymDoomSyncMultiPlayerEnvironment(gym.Env):
 class GymDoomSyncMultiPlayerEnvironment(gym.Env):
     metadata = {'render.modes': ['human', 'rgb_array']}
     
-    def __init__(self, config, num_players):
+    def __init__(self, config, num_players, port=8000):
         self.num_players = num_players
-        with DOOM_ENV_LOCK:
-            self.doom_env = DoomSyncMultiPlayerEnvironment(config, num_players) 
-            time.sleep(2) 
+        self.doom_env = DoomSyncMultiPlayerEnvironment(config, num_players, port) 
         
         # Get action space from first environment
         # For now, we assume each agent has the same action space
@@ -130,8 +124,8 @@ class NdarrayEnv(gym.Wrapper):
         states = self.env.reset()
         return self._state_to_ndarray(states)
 
-def wrap_ma_doom(config, nplayers):
-    env = GymDoomSyncMultiPlayerEnvironment(config, nplayers)
+def wrap_ma_doom(config, nplayers, port):
+    env = GymDoomSyncMultiPlayerEnvironment(config, nplayers, port)
     env = WarpFrame(env)
     env = NdarrayEnv(env)
     env = MaxAndSkipEnv(env, nplayers)
