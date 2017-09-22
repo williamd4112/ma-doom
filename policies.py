@@ -123,13 +123,14 @@ class CnnPolicy(object):
         self.value = value
 
 class MACnnPolicy(object):
-    def __init__(self, sess, ob_space, ac_space, nenv, nsteps, nstack, nplayers, reuse=False):
+    def __init__(self, sess, ob_space, ac_space, nenv,
+                    nsteps, nstack, nplayers, reuse=False, merge=False):
         nbatch = nenv * nsteps
         nh, nw, nc = ob_space.shape
         ob_shape = (nbatch, nplayers, nh, nw, nc*nstack)
         nact = ac_space.n
         X = tf.placeholder(tf.uint8, ob_shape) #obs
-        
+
         # Communication phase
         encs = []
         h4s = []
@@ -140,7 +141,7 @@ class MACnnPolicy(object):
                 h2 = conv(h, 'c2', nf=64, rf=4, stride=2, init_scale=np.sqrt(2))
                 h3 = conv(h2, 'c3', nf=64, rf=3, stride=1, init_scale=np.sqrt(2))
                 h3 = conv_to_fc(h3)
-                h4 = fc(h3, 'fc1', nh=512, init_scale=np.sqrt(2))
+                h4 = fc(h3, 'fc1', nh=512, init_scale=np.sqrt(2), act=lambda x:x)
                 # Encode visual features to communication message (512 -> 128)
                 enc = fc(h4, 'fc1-enc', nh=128, act=tf.nn.relu)
             encs.append(enc)
@@ -148,6 +149,7 @@ class MACnnPolicy(object):
         # Policy phase
         pis = []
         vfs = []
+        decs = []
         for i in range(nplayers):
             comm = [ e for j, e in enumerate(encs) if i != j]
             comm = tf.add_n(comm) / (nplayers - 1)
@@ -155,16 +157,21 @@ class MACnnPolicy(object):
             with tf.variable_scope("model_%d" % i, reuse=reuse):
                 # Decode communication message to features (128 -> 512)
                 dec = fc(comm, 'fc1-dec', nh=512, act=tf.nn.relu)
+                dec_ = tf.identity(dec, name='dec_-%d' % i)
                 # Policy and Value function
-                merge = tf.multiply(h4, dec)
-                pi = fc(merge, 'pi', nact, act=lambda x:x)
-                vf = fc(merge, 'v', 1, act=lambda x:x)
+                if merge:
+                    feats = tf.multiply(h4, tf.stop_gradient(dec_))
+                else:
+                    feats = tf.concat([h4, tf.stop_gradient(dec_)], axis=1)
+                pi = fc(feats, 'pi', nact, act=lambda x:x)
+                vf = fc(feats, 'v', 1, act=lambda x:x)
             pis.append(pi)
             vfs.append(vf)
+            decs.append(tf.identity(dec, name='dec-%d' % i))
 
         v0 = tf.tuple([ vf[:, 0] for vf in vfs ])
         a0 = tf.tuple([ sample(pi) for pi in pis ])
-        
+
         self.initial_state = [] #not statefu
 
         def step(ob, *_args, **_kwargs):
@@ -174,7 +181,7 @@ class MACnnPolicy(object):
         def value(ob, *_args, **_kwargs):
             v = sess.run(v0, {X:ob})
             return np.stack(v, axis=1)
-        
+
         # X is [nbatch, nplayer, h, w, c*hist_len]
         self.X = X
         # pi is [[nbatch, nact]] * nplayers
@@ -185,7 +192,9 @@ class MACnnPolicy(object):
         self.step = step
         # value return is [(v)[nbatch,] * nplayers, []]
         self.value = value
-       
+        self.orig = [h4s[1], h4s[0]]
+        self.dec = decs
+
 
 if __name__ == '__main__':
     from gym import error, spaces
@@ -203,7 +212,7 @@ if __name__ == '__main__':
         #for a in rets[0]:
         #    print(a)
         #for v in rets[1]:
-        #    print(v) 
+        #    print(v)
         print(rets[0].shape)
         print(rets[1].shape)
         rets = (model.value(np.random.rand(32, 2, 84, 84, 12)))
