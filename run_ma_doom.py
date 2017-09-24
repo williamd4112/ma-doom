@@ -4,7 +4,8 @@ from baselines import logger
 from baselines.common import set_global_seeds
 from baselines import bench
 from a2c import learn
-from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
+#from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
+from subproc_env import SubprocVecEnv
 # from baselines.common.atari_wrappers import wrap_deepmind
 from env import wrap_ma_doom
 # from baselines.a2c.policies import CnnPolicy, LstmPolicy, LnLstmPolicy
@@ -38,7 +39,7 @@ def train(config, num_frames, seed, policy, lrschedule, num_cpu, merge, start_po
 def main():
     import argparse
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('--config', help='config path', default='data/defend_the_line_coop.cfg')
+    parser.add_argument('--config', help='config path', default='data/coop.cfg')
     parser.add_argument('--seed', help='RNG seed', type=int, default=0)
     parser.add_argument('--policy', help='Policy architecture', choices=['cnn', 'lstm', 'lnlstm'], default='cnn')
     parser.add_argument('--lrschedule', help='Learning rate schedule', choices=['constant', 'linear'], default='constant')
@@ -48,8 +49,9 @@ def main():
     parser.add_argument('--no-recon', action='store_true', help='merge dec into fc ')
     parser.add_argument('--port', type=int, default=8000, help='merge dec into fc ')
     args = parser.parse_args()
+    print(args)
     train(args.config, num_frames=1e6 * args.million_frames, seed=args.seed,
-        policy=args.policy, lrschedule=args.lrschedule, num_cpu=16,
+        policy=args.policy, lrschedule=args.lrschedule, num_cpu=32,
         merge=args.merge, start_port=args.port, no_recon=args.no_recon)
 
 if __name__ == '__main__':

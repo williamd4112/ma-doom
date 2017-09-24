@@ -157,12 +157,13 @@ class MACnnPolicy(object):
             with tf.variable_scope("model_%d" % i, reuse=reuse):
                 # Decode communication message to features (128 -> 512)
                 dec = fc(comm, 'fc1-dec', nh=512, act=tf.nn.relu)
-                dec_ = tf.identity(dec, name='dec_-%d' % i)
+                dec_ = tf.stop_gradient(tf.identity(dec, name='dec_-%d' % i))
+                att = fc(dec_, 'fc2-att', nh=512, act=tf.nn.relu)
                 # Policy and Value function
                 if merge:
-                    feats = tf.multiply(h4, tf.stop_gradient(dec_))
+                    feats = tf.multiply(h4, att)
                 else:
-                    feats = tf.concat([h4, tf.stop_gradient(dec_)], axis=1)
+                    feats = tf.concat([h4, att], axis=1)
                 pi = fc(feats, 'pi', nact, act=lambda x:x)
                 vf = fc(feats, 'v', 1, act=lambda x:x)
             pis.append(pi)
