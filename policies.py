@@ -134,31 +134,33 @@ class MACnnPolicy(object):
         # Communication phase
         encs = []
         h4s = []
+        _reuse = reuse
         for i in range(nplayers):
             x = X[:, i, ::]
-            with tf.variable_scope("model_%d" % i, reuse=reuse):
+            with tf.variable_scope("model", reuse=_reuse):
                 h = conv(tf.cast(x, tf.float32)/255., 'c1', nf=32, rf=8, stride=4, init_scale=np.sqrt(2))
                 h2 = conv(h, 'c2', nf=64, rf=4, stride=2, init_scale=np.sqrt(2))
                 h3 = conv(h2, 'c3', nf=64, rf=3, stride=1, init_scale=np.sqrt(2))
                 h3 = conv_to_fc(h3)
                 h4 = fc(h3, 'fc1', nh=512, init_scale=np.sqrt(2), act=lambda x:x)
                 # Encode visual features to communication message (512 -> 128)
-                enc = fc(h4, 'fc1-enc', nh=128, act=tf.nn.relu)
+                enc = fc(h4, 'fc1-enc', nh=128, act=tf.nn.softmax)
             encs.append(enc)
             h4s.append(h4)
+            _reuse = True
         # Policy phase
         pis = []
         vfs = []
         decs = []
+        _reuse = reuse
         for i in range(nplayers):
             comm = [ e for j, e in enumerate(encs) if i != j]
             comm = tf.add_n(comm) / (nplayers - 1)
             h4 = h4s[i]
-            with tf.variable_scope("model_%d" % i, reuse=reuse):
+            with tf.variable_scope("model", reuse=_reuse):
                 # Decode communication message to features (128 -> 512)
-                dec = fc(comm, 'fc1-dec', nh=512, act=tf.nn.relu)
-                dec_ = tf.stop_gradient(tf.identity(dec, name='dec_-%d' % i))
-                att = fc(dec_, 'fc2-att', nh=512, act=tf.nn.relu)
+                dec = fc(comm, 'fc1-dec', nh=512, act=tf.nn.softmax)
+                att = fc(tf.stop_gradient(dec), 'fc2-att', nh=512, act=tf.nn.relu)
                 # Policy and Value function
                 if merge:
                     feats = tf.multiply(h4, att)
@@ -166,9 +168,10 @@ class MACnnPolicy(object):
                     feats = tf.concat([h4, att], axis=1)
                 pi = fc(feats, 'pi', nact, act=lambda x:x)
                 vf = fc(feats, 'v', 1, act=lambda x:x)
+            _reuse = True
             pis.append(pi)
             vfs.append(vf)
-            decs.append(tf.identity(dec, name='dec-%d' % i))
+            decs.append(dec)
 
         v0 = tf.tuple([ vf[:, 0] for vf in vfs ])
         a0 = tf.tuple([ sample(pi) for pi in pis ])

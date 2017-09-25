@@ -14,11 +14,12 @@ from baselines.common.atari_wrappers import wrap_deepmind
 from utils import discount_with_dones
 from utils import Scheduler, make_path, find_trainable_variables
 from utils import cat_entropy, mse
+TINY = 1e-8
 
 class Model(object):
 
     def __init__(self, policy, ob_space, ac_space, nenvs, nsteps, nstack, num_procs, nplayers,
-            ent_coef=0.01, vf_coef=0.5, max_grad_norm=0.5, lr=7e-4,
+            ent_coef=0.01, vf_coef=0.5, max_grad_norm=0.5, lr=7e-4, sparsity=0.05, sparse_reg=0.001,
             alpha=0.99, epsilon=1e-2, total_timesteps=int(80e6), lrschedule='linear', no_recon=False, merge=False):
         config = tf.ConfigProto(allow_soft_placement=True,
                                 intra_op_parallelism_threads=num_procs,
@@ -32,6 +33,7 @@ class Model(object):
         ADV = tf.placeholder(tf.float32, [nbatch, nplayers])
         R = tf.placeholder(tf.float32, [nbatch, nplayers])
         LR = tf.placeholder(tf.float32, [])
+        p = sparsity * np.ones((nbatch, 512)).astype(np.float32)
 
         step_model = policy(sess, ob_space, ac_space, nenvs, 1, nstack, nplayers, reuse=False, merge=merge)
         train_model = policy(sess, ob_space, ac_space, nenvs, nsteps, nstack, nplayers, reuse=True, merge=merge)
@@ -47,7 +49,8 @@ class Model(object):
             pg_loss = tf.reduce_mean(ADV[:, i] * neglogpac)
             vf_loss = tf.reduce_mean(mse(tf.squeeze(train_model.vf[i]), R[:, i]))
             recon_loss = tf.reduce_mean(mse(tf.squeeze(train_model.dec[i]),
-                                            tf.squeeze(train_model.orig[i])))
+                                            tf.squeeze(train_model.orig[i]))) + sparse_reg \
+                                            *  tf.reduce_sum(self.kl_divergence(p, train_model.dec[i]))
             entropy = tf.reduce_mean(cat_entropy(train_model.pi[i]))
             if not no_recon:
                 loss = pg_loss - entropy*ent_coef + vf_loss * vf_coef + recon_loss
@@ -110,9 +113,16 @@ class Model(object):
         self.load = load
         tf.global_variables_initializer().run(session=sess)
 
+    def kl_divergence(self, p, p_hat):
+        tf.Assert(tf.less_equal(tf.reduce_max(p_hat), 1.), [p_hat])
+        kl= p * tf.log(p + TINY) - p * tf.log(p_hat + TINY) + \
+                (1 - p) * tf.log(1 - p + TINY) - (1 - p) * tf.log(1 - p_hat + TINY)
+        #        (1 - p) * tf.log(1 - p + TINY) - (1 - p) * tf.log(1 - p_hat + TINY)
+        return kl
+
 class Runner(object):
 
-    def __init__(self, env, model, nsteps=5, nstack=4, nplayers=2, gamma=0.99):
+    def __init__(self, env, model, nsteps=8, nstack=12, nplayers=2, gamma=0.99):
         self.env = env
         self.model = model
         self.nplayers = nplayers
@@ -184,10 +194,10 @@ class Runner(object):
         mb_masks = mb_masks.flatten()
         return mb_obs, mb_states, mb_rewards, mb_masks, mb_actions, mb_values
 
-def learn(policy, env, seed, nsteps=5, nstack=4, nplayers=2,
+def learn(policy, env, seed, nsteps=8, nstack=12, nplayers=2,
         total_timesteps=int(80e6), vf_coef=0.5, ent_coef=0.01,
         max_grad_norm=0.5, lr=7e-4, lrschedule='linear',
-        epsilon=1e-5, alpha=0.99, gamma=0.99, log_interval=4, no_recon=False, merge=False):
+        epsilon=1e-5, alpha=0.99, gamma=0.99, log_interval=40, no_recon=False, merge=False):
     tf.reset_default_graph()
     set_global_seeds(seed)
 
