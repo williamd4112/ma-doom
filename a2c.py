@@ -44,14 +44,14 @@ class Model(object):
         entropy = tf.reduce_mean(cat_entropy(train_model.pi))
         loss = pg_loss - entropy * ent_coef + vf_loss * vf_coef
 
-        params = find_tranable_variables("model")
+        params = find_trainable_variables("model")
         grads = tf.gradients(loss, params)
         if max_grad_norm is not None:
             grads, grad_norm = tf.clip_by_global_norm(grads, max_grad_norm)
         grads = list(zip(grads, params))
         trainer = tf.train.RMSPropOptimizer(learning_rate=LR, decay=alpha, epsilon=epsilon)
 
-        _tran = trainer.apply_gradients(grads)
+        _train = trainer.apply_gradients(grads)
         lr = Scheduler(v=lr, nvalues=total_timesteps, schedule=lrschedule)
 
         def train(obs, states, rewards, masks, actions, values):
@@ -82,6 +82,7 @@ class Model(object):
         self.train = train
         self.train_model = train_model
         self.step_model = step_model
+        self.step = step_model.step
         self.value = step_model.value
         self.init_state = step_model.init_state
         self.save = save
@@ -93,12 +94,12 @@ class Runner(object):
     def __init__(self, env, model, nsteps=16, nstack=12, nplayers=2, gamma=0.99):
         self.env = env
         self.model = model
+        self.obs_shape = env.observation_space.shape
         nh, nw, nc = self.obs_shape
-        nenv = env.num_envs
+        self.nenv = nenv = env.num_envs
 
         self.nplayers = nplayers
-        self.obs_shape = env.observation_space.shape
-        self.batch_ob_shape = (nenv*nsteps*nplayers, nh, nw, nc*nstack)
+        self.batch_ob_shape = (nenv*nsteps, nplayers, nh, nw, nc*nstack)
         self.obs = np.zeros((nenv, nplayers, nh, nw, nc*nstack), dtype=np.uint8)
 
         obs = env.reset()
@@ -114,8 +115,7 @@ class Runner(object):
         self.obs[:, :, :, :, -nc:] = obs
 
     def run(self):
-        mb_obs, mb_rewards, mb_actions, mb_values, mb_dones = [],[],[],[],[]
-        mb_states = self.states
+        mb_obs, mb_states, mb_rewards, mb_actions, mb_values, mb_dones = [], [], [],[],[],[]
         for n in range(self.nsteps):
             actions, values, states = self.model.step(self.obs, self.states, self.dones)
             mb_obs.append(np.copy(self.obs))
@@ -129,17 +129,19 @@ class Runner(object):
                 if done:
                     self.obs[n] = self.obs[n]*0
             self.update_obs(obs)
+            mb_states.append(np.copy(self.states))
             mb_rewards.append(rewards)
         mb_dones.append(self.dones)
         #batch of steps to batch of rollouts
         mb_obs = np.asarray(mb_obs, dtype=np.uint8).swapaxes(1, 0).reshape(self.batch_ob_shape)
+        mb_states = np.asarray(mb_states, dtype=np.float32).swapaxes(1, 0).reshape([self.nenv*self.nsteps, -1])
         mb_rewards = np.asarray(mb_rewards, dtype=np.float32).swapaxes(1, 0)
         mb_actions = np.asarray(mb_actions, dtype=np.int32).swapaxes(1, 0)
         mb_values = np.asarray(mb_values, dtype=np.float32).swapaxes(1, 0)
         mb_dones = np.asarray(mb_dones, dtype=np.bool).swapaxes(1, 0)
         mb_masks = mb_dones[:, :-1]
         mb_dones = mb_dones[:, 1:]
-        last_values = self.model.value(self.obs, self.states, self.dones).tolist()
+        last_values = self.model.value(self.obs, self.states, self.dones)
         #discount/bootstrap off value fn
         for n, (rewards, dones, value) in enumerate(zip(mb_rewards, mb_dones, last_values)):
             rewards = rewards.tolist()
@@ -151,8 +153,7 @@ class Runner(object):
             mb_rewards[n] = rewards
 
         def _flatten(arr):
-            shape = arr.shape
-            return arr.reshape([shape[0]*shape[1], -1])
+            return arr.reshape(-1)
 
         mb_rewards = _flatten(mb_rewards)
         mb_actions = _flatten(mb_actions)

@@ -136,7 +136,7 @@ def wrap_ma_doom(config, nplayers, port):
     return env
 
 if __name__ == '__main__':
-    env = GymDoomSyncMultiPlayerEnvironment('data/coop.cfg', 2)
+    env = GymDoomSyncMultiPlayerEnvironment('data/defend_the_center_coop.cfg', 2)
     env = WarpFrame(env)
     env = NdarrayEnv(env)
     env = MaxAndSkipEnv(env, nplayers=2)

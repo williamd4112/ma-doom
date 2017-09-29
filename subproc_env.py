@@ -5,6 +5,7 @@ from baselines.common.vec_env import VecEnv
 
 def step(env, data):
     ob, reward, done, info = env.step(data)
+    done = all(done)
     if done:
         ob = env.reset()
     return (ob, reward, done, info)
