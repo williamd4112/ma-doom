@@ -161,7 +161,7 @@ class Runner(object):
         mb_masks = mb_masks.flatten()
         return mb_obs, mb_states, mb_rewards, mb_masks, mb_actions, mb_values
 
-def learn(policy, env, seed, nsteps=10, nstack=12, nplayers=2,
+def learn(policy, env, seed, nsteps=20, nstack=12, nplayers=2,
         total_timesteps=int(80e6), vf_coef=0.5, ent_coef=0.01,
         max_grad_norm=0.5, lr=7e-4, lrschedule='linear',
         epsilon=1e-5, alpha=0.99, gamma=0.99, log_interval=5):
@@ -190,17 +190,20 @@ def learn(policy, env, seed, nsteps=10, nstack=12, nplayers=2,
         policy_loss, value_loss, policy_entropy = model.train(obs, states, rewards, masks, actions, values)
         nseconds = time.time()-tstart
         fps = int((update*nbatch)/nseconds)
+
+        # reshape to obtain the score of each agent
         if update % log_interval == 0 or update == 1:
+            ev = explained_variance(values, rewards)
             logger.record_tabular("nupdates", update)
             logger.record_tabular("total_timesteps", update*nbatch)
             logger.record_tabular("fps", fps)
+            logger.record_tabular("policy_entropy", float(policy_entropy))
+            logger.record_tabular("value_loss", float(value_loss))
+            logger.record_tabular("explained variance", float(ev))
+            rewards = rewards.reshape(-1, 2)
             for i in range(nplayers):
-                ev = explained_variance(values, rewards)
-                logger.record_tabular("policy_entropy_%d" % i, float(policy_entropy))
-                logger.record_tabular("value_loss_%d" % i, float(value_loss))
-                logger.record_tabular("explained_variance_%d" % i, float(ev))
-                logger.record_tabular("mean_reward_%d" % i, float(np.mean(rewards)))
-                logger.record_tabular("max_reward_%d" % i, float(np.max(rewards)))
+                logger.record_tabular("mean_reward_%d" % i, float(np.mean(rewards[:, i])))
+                logger.record_tabular("max_reward_%d" % i, float(np.max(rewards[:, i])))
             logger.dump_tabular()
     env.close()
 
