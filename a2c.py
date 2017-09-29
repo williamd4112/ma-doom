@@ -115,7 +115,7 @@ class Runner(object):
         self.obs[:, :, :, :, -nc:] = obs
 
     def run(self):
-        mb_obs, mb_states, mb_rewards, mb_actions, mb_values, mb_dones = [], [], [],[],[],[]
+        mb_obs, mb_states, mb_rewards, mb_actions, mb_values, mb_dones = [], [], [], [], [], []
         for n in range(self.nsteps):
             actions, values, states = self.model.step(self.obs, self.states, self.dones)
             mb_obs.append(np.copy(self.obs))
@@ -128,6 +128,7 @@ class Runner(object):
             for n, done in enumerate(dones):
                 if done:
                     self.obs[n] = self.obs[n]*0
+                    self.states = model.init_state
             self.update_obs(obs)
             mb_states.append(np.copy(self.states))
             mb_rewards.append(rewards)
@@ -161,7 +162,7 @@ class Runner(object):
         mb_masks = mb_masks.flatten()
         return mb_obs, mb_states, mb_rewards, mb_masks, mb_actions, mb_values
 
-def learn(policy, env, seed, nsteps=20, nstack=12, nplayers=2,
+def learn(policy, env, seed, nsteps=16, nstack=12, nplayers=2,
         total_timesteps=int(80e6), vf_coef=0.5, ent_coef=0.01,
         max_grad_norm=0.5, lr=7e-4, lrschedule='linear',
         epsilon=1e-5, alpha=0.99, gamma=0.99, log_interval=5):
