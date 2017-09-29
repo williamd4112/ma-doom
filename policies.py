@@ -37,7 +37,7 @@ class MACommPolicy(object):
             #ms = batch_to_seq( M, nenv*nsteps, nplayers)
 
             mem, snew = lnlstm(xs, ms, S, 'lstm1', nh=nlstm)
-            mem = tf.reshape(mem, [nbatch, -1])
+            mem = tf.reshape(mem, [nbatch, nplayers*nlstm])
             h4 = tf.reshape(h4, [nbatch, nplayers, -1])
 
             # compute pi, vaule for each agents
@@ -85,6 +85,9 @@ class MACnnPolicy(object):
         nact = ac_space.n
         X = tf.placeholder(tf.uint8, ob_shape) #obs
 
+        pis = []
+        vfs = []
+
         with tf.variable_scope("model", reuse=reuse):
             x = tf.reshape(tf.cast(X, tf.float32)/255., [nbatch*nplayers, nh, nw, nc*nstack])
             h = conv(tf.cast(x, tf.float32)/255., 'c1', nf=32, rf=8, stride=4, init_scale=np.sqrt(2))
@@ -93,9 +96,17 @@ class MACnnPolicy(object):
             h3 = conv_to_fc(h3)
             h4 = fc(h3, 'fc1', nh=512, init_scale=np.sqrt(2))
             h5 = fc(h4, 'fc2', nh=512, init_scale=np.sqrt(2))
+            h5 = tf.reshape(h5, [nbatch, nplayers, -1])
 
-            pi = fc(h5, 'pi', nact, act=tf.identity)
-            vf = fc(h5, 'v', 1, act=tf.identity)
+            _reuse = False
+            for i in range(nplayers):
+                pi = fc(h5[:,i], 'pi', nact, act=tf.identity, reuse=_reuse)
+                vf = fc(h5[:,i], 'v', 1, act=tf.identity, reuse=_reuse)
+                pis.append(pi)
+                vfs.append(vf)
+                _reuse = True
+            pi = tf.concat(pis, axis=0)
+            vf = tf.concat(vfs, axis=0)
 
         v0 = vf[:, 0]
         a0 = sample(pi)

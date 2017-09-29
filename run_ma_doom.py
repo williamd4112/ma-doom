@@ -9,7 +9,7 @@ from subproc_env import SubprocVecEnv
 # from baselines.common.atari_wrappers import wrap_deepmind
 from env import wrap_ma_doom
 # from baselines.a2c.policies import CnnPolicy, LstmPolicy, LnLstmPolicy
-from policies import MACommPolicy
+from policies import MACommPolicy, MACnnPolicy
 
 NUM_PLAYERS = 2
 
@@ -24,10 +24,10 @@ def train(config, num_frames, seed, policy, lrschedule, num_cpu, start_port=8000
         return _thunk
     set_global_seeds(seed)
     env = SubprocVecEnv([make_env(i) for i in range(num_cpu)])
-    if policy == 'cnn':
+    if policy == 'comm':
         policy_fn = MACommPolicy
-    elif policy == 'lstm':
-        raise NotImplemented
+    elif policy == 'cnn':
+        policy_fn = MACnnPolicy
     elif policy == 'lnlstm':
         raise NotImplemented
     time.sleep(num_cpu * 2)
@@ -40,17 +40,16 @@ def main():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--config', help='config path', default='data/defend_the_center_coop.cfg')
     parser.add_argument('--seed', help='RNG seed', type=int, default=0)
-    parser.add_argument('--policy', help='Policy architecture', choices=['cnn', 'lstm', 'lnlstm'], default='cnn')
+    parser.add_argument('--policy', help='Policy architecture', choices=['cnn', 'comm', 'lnlstm'], default='comm')
     parser.add_argument('--lrschedule', help='Learning rate schedule', choices=['constant', 'linear'], default='constant')
     parser.add_argument('--million_frames', help='How many frames to train (/ 1e6). '
         'This number gets divided by 4 due to frameskip', type=int, default=40)
-    parser.add_argument('--merge', action='store_true', help='merge dec into fc ')
     parser.add_argument('--no-recon', action='store_true', help='merge dec into fc ')
     parser.add_argument('--port', type=int, default=8000, help='merge dec into fc ')
     args = parser.parse_args()
     print(args)
     train(args.config, num_frames=1e6 * args.million_frames, seed=args.seed,
-        policy=args.policy, lrschedule=args.lrschedule, num_cpu=3, start_port=args.port)
+        policy=args.policy, lrschedule=args.lrschedule, num_cpu=8, start_port=args.port)
 
 if __name__ == '__main__':
     main()
