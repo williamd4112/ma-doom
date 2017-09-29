@@ -17,6 +17,9 @@ class MACommPolicy(object):
         M = tf.placeholder(tf.float32, [nbatch], name='M')
         S = tf.placeholder(tf.float32, [nbatch, nlstm*2], name='S')
 
+        pis = []
+        vfs = []
+
         with tf.variable_scope("model", reuse=reuse):
             # tuck observation from all players at once
             x = tf.reshape(tf.cast(X, tf.float32)/255., [nbatch*nplayers, nh, nw, nc*nstack])
@@ -24,7 +27,7 @@ class MACommPolicy(object):
             h2 = conv(h1, 'conv2', nf=64, rf=4, stride=2, init_scale=np.sqrt(2))
             h3 = conv(h2, 'conv3', nf=64, rf=3, stride=1, init_scale=np.sqrt(2))
             h3 = conv_to_fc(h3)
-            h4 = fc(h3, 'fc1', nh=512, init_scale=np.sqrt(2), act=tf.identity)
+            h4 = fc(h3, 'fc1', nh=512, init_scale=np.sqrt(2))
 
             # shared memory:
             # instead of time-sequence, each rnn cell here
@@ -34,12 +37,21 @@ class MACommPolicy(object):
             #ms = batch_to_seq( M, nenv*nsteps, nplayers)
 
             mem, snew = lnlstm(xs, ms, S, 'lstm1', nh=nlstm)
-            mem = seq_to_batch(mem)
+            mem = tf.reshape(mem, [nbatch, -1])
+            h4 = tf.reshape(h4, [nbatch, nplayers, -1])
 
-            # compute pi, vaule
-            h5 = fc(tf.concat([mem, h4], axis=1), 'fc-pi', nh=512, init_scale=np.sqrt(2))
-            pi = fc(h5, 'pi', nact, act=tf.identity)
-            vf = fc(h5, 'v', 1, act=tf.identity)
+            # compute pi, vaule for each agents
+
+            _reuse = False
+            for i in range(nplayers):
+                h5 = fc(tf.concat([mem, h4[:,i]], axis=1), 'fc-pi', nh=512, init_scale=np.sqrt(2), reuse=_reuse)
+                pi = fc(h5, 'pi', nact, act=tf.identity, reuse=_reuse)
+                vf = fc(h5, 'v', 1, act=tf.identity, reuse=_reuse)
+                pis.append(pi)
+                vfs.append(vf)
+                _reuse = True
+            pi = tf.concat(pis, axis=0)
+            vf = tf.concat(vfs, axis=0)
 
         v0 = vf[:, 0]
         a0 = sample(pi)
@@ -66,80 +78,46 @@ class MACommPolicy(object):
 
 class MACnnPolicy(object):
     def __init__(self, sess, ob_space, ac_space, nenv,
-                    nsteps, nstack, nplayers, reuse=False, merge=False):
+                    nsteps, nstack, nplayers, reuse=False):
         nbatch = nenv * nsteps
         nh, nw, nc = ob_space.shape
         ob_shape = (nbatch, nplayers, nh, nw, nc*nstack)
         nact = ac_space.n
         X = tf.placeholder(tf.uint8, ob_shape) #obs
 
-        # Communication phase
-        encs = []
-        h4s = []
-        _reuse = reuse
-        for i in range(nplayers):
-            x = X[:, i, ::]
-            with tf.variable_scope("model", reuse=_reuse):
-                h = conv(tf.cast(x, tf.float32)/255., 'c1', nf=32, rf=8, stride=4, init_scale=np.sqrt(2))
-                h2 = conv(h, 'c2', nf=64, rf=4, stride=2, init_scale=np.sqrt(2))
-                h3 = conv(h2, 'c3', nf=64, rf=3, stride=1, init_scale=np.sqrt(2))
-                h3 = conv_to_fc(h3)
-                h4 = fc(h3, 'fc1', nh=512, init_scale=np.sqrt(2), act=lambda x:x)
-                # Encode visual features to communication message (512 -> 128)
-                enc = fc(h4, 'fc1-enc', nh=128, act=tf.nn.softmax)
-            encs.append(enc)
-            h4s.append(h4)
-            _reuse = True
-        # Policy phase
-        pis = []
-        vfs = []
-        decs = []
-        _reuse = reuse
-        for i in range(nplayers):
-            comm = [ e for j, e in enumerate(encs) if i != j]
-            comm = tf.add_n(comm) / (nplayers - 1)
-            h4 = h4s[i]
-            with tf.variable_scope("model", reuse=_reuse):
-                # Decode communication message to features (128 -> 512)
-                dec = fc(comm, 'fc1-dec', nh=512, act=tf.nn.softmax)
-                att = fc(tf.stop_gradient(dec), 'fc2-att', nh=512, act=tf.nn.relu)
-                # Policy and Value function
-                if merge:
-                    feats = tf.multiply(h4, att)
-                else:
-                    feats = tf.concat([h4, att], axis=1)
-                pi = fc(feats, 'pi', nact, act=lambda x:x)
-                vf = fc(feats, 'v', 1, act=lambda x:x)
-            _reuse = True
-            pis.append(pi)
-            vfs.append(vf)
-            decs.append(dec)
+        with tf.variable_scope("model", reuse=reuse):
+            x = tf.reshape(tf.cast(X, tf.float32)/255., [nbatch*nplayers, nh, nw, nc*nstack])
+            h = conv(tf.cast(x, tf.float32)/255., 'c1', nf=32, rf=8, stride=4, init_scale=np.sqrt(2))
+            h2 = conv(h, 'c2', nf=64, rf=4, stride=2, init_scale=np.sqrt(2))
+            h3 = conv(h2, 'c3', nf=64, rf=3, stride=1, init_scale=np.sqrt(2))
+            h3 = conv_to_fc(h3)
+            h4 = fc(h3, 'fc1', nh=512, init_scale=np.sqrt(2))
+            h5 = fc(h4, 'fc2', nh=512, init_scale=np.sqrt(2))
 
-        v0 = tf.tuple([ vf[:, 0] for vf in vfs ])
-        a0 = tf.tuple([ sample(pi) for pi in pis ])
+            pi = fc(h5, 'pi', nact, act=tf.identity)
+            vf = fc(h5, 'v', 1, act=tf.identity)
 
-        self.initial_state = [] #not statefu
+        v0 = vf[:, 0]
+        a0 = sample(pi)
+        self.init_state = []
+
 
         def step(ob, *_args, **_kwargs):
             a, v = sess.run([a0, v0], {X:ob})
-            return np.stack(a, axis=1), np.stack(v, axis=1), [] #dummy state
+            a = [a[i:i+nplayers] for i in range(0, len(a), nplayers)]
+            v = [v[i:i+nplayers] for i in range(0, len(v), nplayers)]
+            return a, v, [] #dummy state
 
         def value(ob, *_args, **_kwargs):
             v = sess.run(v0, {X:ob})
-            return np.stack(v, axis=1)
+            v = [v[i:i+nplayers] for i in range(0, len(v), nplayers)]
+            return v
 
-        # X is [nbatch, nplayer, h, w, c*hist_len]
         self.X = X
-        # pi is [[nbatch, nact]] * nplayers
-        self.pi = pis
-        # vf is [[nbatch, 1]] * nplayers
-        self.vf = vfs
-        # step return is [(a)[nbatch,] * nplayers, (v)[nbatch,] * nplayers, []]
+        self.pi = pi
+        self.vf = vf
         self.step = step
-        # value return is [(v)[nbatch,] * nplayers, []]
         self.value = value
-        self.orig = [h4s[1], h4s[0]]
-        self.dec = decs
 
 
 if __name__ == '__main__':
