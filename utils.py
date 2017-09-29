@@ -103,6 +103,9 @@ def _ln(x, g, b, e=1e-5, axes=[1]):
     x = x*g+b
     return x
 
+def lnmem(xs, ms, s, scope, nh, init_scale=1.0):
+
+
 def lnlstm(xs, ms, s, scope, nh, init_scale=1.0):
     nbatch, nin = [v.value for v in xs[0].get_shape()]
     nsteps = len(xs)

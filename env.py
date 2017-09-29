@@ -44,7 +44,7 @@ class GymDoomSyncMultiPlayerEnvironment(gym.Env):
 
     def __init__(self, config, num_players, port=8000):
         self.num_players = num_players
-        self.doom_env = DoomSyncMultiPlayerEnvironment(config, num_players, port, deathmatch=True)
+        self.doom_env = DoomSyncMultiPlayerEnvironment(config, num_players, port, deathmatch=False)
 
         # Get action space from first environment
         # For now, we assume each agent has the same action space
