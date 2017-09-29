@@ -128,7 +128,7 @@ class Runner(object):
             for n, done in enumerate(dones):
                 if done:
                     self.obs[n] = self.obs[n]*0
-                    self.states = model.init_state
+                    self.states = self.model.init_state
             self.update_obs(obs)
             mb_states.append(np.copy(self.states))
             mb_rewards.append(rewards)
