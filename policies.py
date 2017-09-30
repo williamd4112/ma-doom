@@ -5,6 +5,84 @@ from baselines.common.distributions import make_pdtype
 import baselines.common.tf_util as U
 import gym
 
+class MACommSepPolicy(object):
+    def __init__(self, sess, ob_space, ac_space, nenv, nsteps, nstack,
+            nplayers, nlstm=256, reuse=False):
+        nbatch = nenv * nsteps
+        nh, nw, nc = ob_space.shape
+        ob_shape = (nbatch, nplayers, nh, nw, nc*nstack)
+        nact = ac_space.n
+
+        X = tf.placeholder(tf.uint8, ob_shape, name='X')
+        M = tf.placeholder(tf.float32, [nbatch], name='M')
+        S = tf.placeholder(tf.float32, [nbatch, nlstm*nplayers], name='S')
+
+        pis = []
+        vfs = []
+        h4s = []
+
+        _reuse = reuse
+        for i in range(nplayers):
+            with tf.variable_scope("model", reuse=_reuse):
+                # tuck observation from all players at once
+                x = tf.cast(X[:,i], tf.float32)/255.
+                h1 = conv( x, 'conv1', nf=32, rf=8, stride=4, init_scale=np.sqrt(2), reuse=_reuse)
+                h2 = conv(h1, 'conv2', nf=64, rf=4, stride=2, init_scale=np.sqrt(2), reuse=_reuse)
+                h3 = conv(h2, 'conv3', nf=64, rf=3, stride=1, init_scale=np.sqrt(2), reuse=_reuse)
+                h3 = conv_to_fc(h3)
+                h4 = fc(h3, 'fc1', nh=512, init_scale=np.sqrt(2), reuse=_reuse)
+            h4s.append(h4)
+            _reuse = True
+        h4 = tf.concat(h4s, axis=0)
+
+        # shared memory:
+        # instead of time-sequence, each rnn cell here
+        # is responsible for "one player"
+        with tf.variable_scope("model", reuse=reuse):
+            xs = batch_to_seq(h4, nenv*nsteps, nplayers)
+            ms = tf.expand_dims(M, axis=1)
+            mem, snew = lnlstm(xs, ms, S, 'lstm1', nh=nlstm, reuse=reuse)
+            mem = tf.reshape(mem, [nbatch, nplayers*nlstm])
+            h4 = tf.reshape(h4, [nbatch, nplayers, -1])
+
+
+        _reuse = reuse
+        for i in range(nplayers):
+            with tf.variable_scope("model", reuse=_reuse):
+                h5 = fc(tf.concat([mem, h4[:,i]], axis=1), 'fc-pi', nh=512, init_scale=np.sqrt(2), reuse=_reuse)
+                pi = fc(h5, 'pi', nact, act=tf.identity, reuse=_reuse)
+                vf = fc(h5, 'v', 1, act=tf.identity, reuse=_reuse)
+            pis.append(pi)
+            vfs.append(vf)
+            _reuse = True
+        pi = tf.concat(pis, axis=0)
+        vf = tf.concat(vfs, axis=0)
+
+        v0 = vf[:, 0]
+        a0 = sample(pi)
+        self.init_state = np.zeros((nbatch, nlstm*2), dtype=np.float32)
+
+        def step(ob, state, mask):
+            a, v, s = sess.run([a0, v0, snew], {X:ob, S:state, M:mask})
+            a = [a[i:i+nplayers] for i in range(0, len(a), nplayers)]
+            v = [v[i:i+nplayers] for i in range(0, len(v), nplayers)]
+            return a, v, s
+
+        def value(ob, state, mask):
+            v = sess.run(v0, {X:ob, S:state, M:mask})
+            v = [v[i:i+nplayers] for i in range(0, len(v), nplayers)]
+            return v
+
+        self.X = X
+        self.M = M
+        self.S = S
+        self.pi = pi
+        self.vf = vf
+        self.step = step
+        self.value = value
+
+
+
 class MACommPolicy(object):
     def __init__(self, sess, ob_space, ac_space, nenv, nsteps, nstack,
             nplayers, nlstm=256, reuse=False):
