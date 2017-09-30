@@ -9,7 +9,7 @@ from subproc_env import SubprocVecEnv
 # from baselines.common.atari_wrappers import wrap_deepmind
 from env import wrap_ma_doom
 # from baselines.a2c.policies import CnnPolicy, LstmPolicy, LnLstmPolicy
-from policies import MACommPolicy, MACnnPolicy, MACnnSepPolicy, MACommSepPolicy
+from policies import MACommPolicy, MACnnPolicy, MACnnSepPolicy, MACommSepCriticPolicy
 
 NUM_PLAYERS = 2
 
@@ -27,9 +27,7 @@ def train(config, num_frames, seed, policy, lrschedule, num_cpu, start_port=8000
     if policy == 'comm':
         policy_fn = MACommPolicy
     elif policy == 'commsep':
-        policy_fn = MACommSepPolicy
-    elif policy == 'cnnsep':
-        policy_fn = MACnnSepPolicy
+        policy_fn = MACommSepCriticPolicy
     elif policy == 'cnn':
         policy_fn = MACnnPolicy
     elif policy == 'lnlstm':
@@ -44,7 +42,7 @@ def main():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--config', help='config path', default='data/triple_lines_easy.cfg')
     parser.add_argument('--seed', help='RNG seed', type=int, default=0)
-    parser.add_argument('--policy', help='Policy architecture', choices=['cnnsep', 'cnn', 'comm', 'lnlstm', 'commsep'], default='comm')
+    parser.add_argument('--policy', help='Policy architecture', choices=['cnn', 'comm', 'commsep'], default='comm')
     parser.add_argument('--lrschedule', help='Learning rate schedule', choices=['constant', 'linear'], default='constant')
     parser.add_argument('--million_frames', help='How many frames to train (/ 1e6). '
         'This number gets divided by 4 due to frameskip', type=int, default=40)

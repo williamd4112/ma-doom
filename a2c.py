@@ -72,9 +72,10 @@ class Model(object):
             )
             return policy_loss, value_loss, policy_entropy, summary
 
-        def save(save_path):
+        def save(save_path, postfix):
             ps = sess.run(params)
             make_path(save_path)
+            joblib.dump(ps, save_path+"/model"+str(postfix)+".pkl")
 
         def load(load_path):
             loaded_params = joblib.load(load_path)
@@ -96,9 +97,11 @@ class Model(object):
             tf.summary.histogram(var.name, var)
         for grad, var in grads:
             tf.summary.histogram(var.name + '/gradient', grad)
+        tf.summary.scalar("learning rate",  LR)
         tf.summary.scalar("pg_loss",  pg_loss)
         tf.summary.scalar("vf_loss",  vf_loss)
-        tf.summary.scalar("pred_re", tf.reduce_mean(self.train_model.vf))
+        tf.summary.scalar("pred_rewd", tf.reduce_mean(self.train_model.vf))
+        tf.summary.scalar("mean_rewd", tf.reduce_mean(R))
         self.summary_op = tf.summary.merge_all()
 
 
@@ -179,7 +182,7 @@ class Runner(object):
 def learn(policy, env, seed, nsteps=8, nstack=12, nplayers=2,
         total_timesteps=int(80e6), vf_coef=0.5, ent_coef=0.01,
         max_grad_norm=0.5, lr=7e-4, lrschedule='linear',
-        epsilon=1e-5, alpha=0.99, gamma=0.99, log_interval=5):
+        epsilon=1e-5, alpha=0.99, gamma=0.99, log_interval=20, save_interval=20):
     tf.reset_default_graph()
     set_global_seeds(seed)
 
@@ -225,6 +228,8 @@ def learn(policy, env, seed, nsteps=8, nstack=12, nplayers=2,
                 logger.record_tabular("max_reward_%d" % i, float(np.max(rewards[:, i])))
                 logger.record_tabular("mean_reward_%d (over 100 updates)" % i, float(np.mean(rewards[:, i])))
             logger.dump_tabular()
+            if update % (log_interval * save_interval) == 0:
+                model.save(logs_path, log_interval)
     env.close()
 
 if __name__ == '__main__':

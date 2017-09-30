@@ -103,10 +103,44 @@ def _ln(x, g, b, e=1e-5, axes=[1]):
     x = x*g+b
     return x
 
-def lnlstm(xs, ms, s, scope, nh, init_scale=1.0):
+def lnmem(xs, ms, s, scope, nh, init_scale=1.0, activation=tf.nn.relu, reuse=False):
     nbatch, nin = [v.value for v in xs[0].get_shape()]
     nsteps = len(xs)
-    with tf.variable_scope(scope):
+    with tf.variable_scope(scope, reuse=reuse):
+        wx = tf.get_variable("wx", [nin, nh*4], initializer=ortho_init(init_scale))
+        gx = tf.get_variable("gx", [nh*4], initializer=tf.constant_initializer(1.0))
+        bx = tf.get_variable("bx", [nh*4], initializer=tf.constant_initializer(0.0))
+
+        wh = tf.get_variable("wh", [nh, nh*4], initializer=ortho_init(init_scale))
+        gh = tf.get_variable("gh", [nh*4], initializer=tf.constant_initializer(1.0))
+        bh = tf.get_variable("bh", [nh*4], initializer=tf.constant_initializer(0.0))
+
+        b = tf.get_variable("b", [nh*4], initializer=tf.constant_initializer(0.0))
+
+        gc = tf.get_variable("gc", [nh], initializer=tf.constant_initializer(1.0))
+        bc = tf.get_variable("bc", [nh], initializer=tf.constant_initializer(0.0))
+
+    c, h = tf.split(axis=1, num_or_size_splits=2, value=s)
+    for idx, x in enumerate(xs):
+        c = c*(1-ms)
+        h = h*(1-ms)
+        z = _ln(tf.matmul(x, wx), gx, bx) + _ln(tf.matmul(h, wh), gh, bh) + b
+        i, f, o, u = tf.split(axis=1, num_or_size_splits=4, value=z)
+        i = tf.nn.sigmoid(i)
+        f = tf.nn.sigmoid(f)
+        o = tf.nn.sigmoid(o)
+        u = activation(u)
+        c = f*c + i*u
+        h = o*activation(_ln(c, gc, bc))
+        xs[idx] = h
+    s = tf.concat(axis=1, values=[c, h])
+    return xs, s
+
+
+def lnlstm(xs, ms, s, scope, nh, init_scale=1.0, reuse=False):
+    nbatch, nin = [v.value for v in xs[0].get_shape()]
+    nsteps = len(xs)
+    with tf.variable_scope(scope, reuse=reuse):
         wx = tf.get_variable("wx", [nin, nh*4], initializer=ortho_init(init_scale))
         gx = tf.get_variable("gx", [nh*4], initializer=tf.constant_initializer(1.0))
         bx = tf.get_variable("bx", [nh*4], initializer=tf.constant_initializer(0.0))
