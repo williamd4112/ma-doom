@@ -1,4 +1,5 @@
 import os.path as osp
+import os
 import gym
 import time
 import joblib
@@ -16,10 +17,11 @@ from utils import Scheduler, make_path, find_trainable_variables
 from utils import cat_entropy, mse
 TINY = 1e-8
 
+
 class Model(object):
 
     def __init__(self, policy, ob_space, ac_space, nenvs, nsteps, nstack, num_procs, nplayers,
-            ent_coef=0.01, vf_coef=0.5, max_grad_norm=0.5, lr=7e-4, sparsity=0.05, sparse_reg=0.001,
+            ent_coef=0.01, vf_coef=0.5, max_grad_norm=0.5, lr=4e-4,
             alpha=0.99, epsilon=1e-2, total_timesteps=int(80e6), lrschedule='linear'):
         config = tf.ConfigProto(allow_soft_placement=True,
                                 intra_op_parallelism_threads=num_procs,
@@ -51,8 +53,10 @@ class Model(object):
         grads = list(zip(grads, params))
         trainer = tf.train.RMSPropOptimizer(learning_rate=LR, decay=alpha, epsilon=epsilon)
 
+
         _train = trainer.apply_gradients(grads)
         lr = Scheduler(v=lr, nvalues=total_timesteps, schedule=lrschedule)
+
 
         def train(obs, states, rewards, masks, actions, values):
             advs = rewards - values
@@ -62,11 +66,11 @@ class Model(object):
             if states != []:
                 td_map[train_model.S] = states
                 td_map[train_model.M] = masks
-            policy_loss, value_loss, policy_entropy, _ = sess.run(
-                    [pg_loss, vf_loss, entropy, _train],
+            policy_loss, value_loss, policy_entropy, _, summary = sess.run(
+                    [pg_loss, vf_loss, entropy, _train, self.summary_op],
                     td_map
             )
-            return policy_loss, value_loss, policy_entropy
+            return policy_loss, value_loss, policy_entropy, summary
 
         def save(save_path):
             ps = sess.run(params)
@@ -88,6 +92,16 @@ class Model(object):
         self.save = save
         self.load = load
         tf.global_variables_initializer().run(session=sess)
+        for var in tf.trainable_variables():
+            tf.summary.histogram(var.name, var)
+        for grad, var in grads:
+            tf.summary.histogram(var.name + '/gradient', grad)
+        tf.summary.scalar("pg_loss",  pg_loss)
+        tf.summary.scalar("vf_loss",  vf_loss)
+        tf.summary.scalar("pred_re", tf.reduce_mean(self.train_model.vf))
+        self.summary_op = tf.summary.merge_all()
+
+
 
 class Runner(object):
 
@@ -162,7 +176,7 @@ class Runner(object):
         mb_masks = mb_masks.flatten()
         return mb_obs, mb_states, mb_rewards, mb_masks, mb_actions, mb_values
 
-def learn(policy, env, seed, nsteps=16, nstack=12, nplayers=2,
+def learn(policy, env, seed, nsteps=8, nstack=12, nplayers=2,
         total_timesteps=int(80e6), vf_coef=0.5, ent_coef=0.01,
         max_grad_norm=0.5, lr=7e-4, lrschedule='linear',
         epsilon=1e-5, alpha=0.99, gamma=0.99, log_interval=5):
@@ -184,16 +198,21 @@ def learn(policy, env, seed, nsteps=16, nstack=12, nplayers=2,
 
     nbatch = nenvs*nsteps
     tstart = time.time()
+    reward_hist = np.array([])
+    logs_path = "log/" + policy.__name__
+    summary_writer = tf.summary.FileWriter(logs_path, graph=tf.get_default_graph())
+
     for update in range(1, total_timesteps//nbatch+1):
         # Collect batch of samples
         obs, states, rewards, masks, actions, values = runner.run()
         # Train on batch
-        policy_loss, value_loss, policy_entropy = model.train(obs, states, rewards, masks, actions, values)
+        policy_loss, value_loss, policy_entropy, summary = model.train(obs, states, rewards, masks, actions, values)
         nseconds = time.time()-tstart
         fps = int((update*nbatch)/nseconds)
 
         # reshape to obtain the score of each agent
         if update % log_interval == 0 or update == 1:
+            summary_writer.add_summary(summary, update)
             ev = explained_variance(values, rewards)
             logger.record_tabular("nupdates", update)
             logger.record_tabular("total_timesteps", update*nbatch)
@@ -203,8 +222,8 @@ def learn(policy, env, seed, nsteps=16, nstack=12, nplayers=2,
             logger.record_tabular("explained variance", float(ev))
             rewards = rewards.reshape(-1, 2)
             for i in range(nplayers):
-                logger.record_tabular("mean_reward_%d" % i, float(np.mean(rewards[:, i])))
                 logger.record_tabular("max_reward_%d" % i, float(np.max(rewards[:, i])))
+                logger.record_tabular("mean_reward_%d (over 100 updates)" % i, float(np.mean(rewards[:, i])))
             logger.dump_tabular()
     env.close()
 
