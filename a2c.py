@@ -179,9 +179,9 @@ class Runner(object):
         mb_masks = mb_masks.flatten()
         return mb_obs, mb_states, mb_rewards, mb_masks, mb_actions, mb_values
 
-def learn(policy, env, seed, nsteps=8, nstack=12, nplayers=2,
+def learn(policy, env, seed, checkpoint=0, nsteps=8, nstack=8, nplayers=2,
         total_timesteps=int(80e6), vf_coef=0.5, ent_coef=0.01,
-        max_grad_norm=0.5, lr=7e-4, lrschedule='linear',
+        max_grad_norm=0.5, lr=4e-4, lrschedule='linear',
         epsilon=1e-5, alpha=0.99, gamma=0.99, log_interval=20, save_interval=20):
     tf.reset_default_graph()
     set_global_seeds(seed)
@@ -204,6 +204,12 @@ def learn(policy, env, seed, nsteps=8, nstack=12, nplayers=2,
     reward_hist = np.array([])
     logs_path = "log/" + policy.__name__
     summary_writer = tf.summary.FileWriter(logs_path, graph=tf.get_default_graph())
+    if checkpoint != 0:
+        print("load from {}".format(checkpoint))
+        load_path = logs_path + "/model" + str(checkpoint) + ".pkl"
+        model.load(load_path)
+    current_ckpt = checkpoint
+
 
     for update in range(1, total_timesteps//nbatch+1):
         # Collect batch of samples
@@ -212,6 +218,7 @@ def learn(policy, env, seed, nsteps=8, nstack=12, nplayers=2,
         policy_loss, value_loss, policy_entropy, summary = model.train(obs, states, rewards, masks, actions, values)
         nseconds = time.time()-tstart
         fps = int((update*nbatch)/nseconds)
+        current_ckpt += 1
 
         # reshape to obtain the score of each agent
         if update % log_interval == 0 or update == 1:
@@ -229,8 +236,10 @@ def learn(policy, env, seed, nsteps=8, nstack=12, nplayers=2,
                 logger.record_tabular("mean_reward_%d (over 100 updates)" % i, float(np.mean(rewards[:, i])))
             logger.dump_tabular()
             if update % (log_interval * save_interval) == 0:
-                model.save(logs_path, log_interval)
+                model.save(logs_path, current_ckpt)
     env.close()
+    model.save(logs_path, current_ckpt)
+    return current_ckpt
 
 if __name__ == '__main__':
     main()

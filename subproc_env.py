@@ -44,7 +44,6 @@ def worker(remote, env_fn_wrapper):
             else:
                 break
 
-
 class CloudpickleWrapper(object):
     """
     Uses cloudpickle to serialize contents (otherwise multiprocessing tries to use pickle)
@@ -90,7 +89,8 @@ class SubprocVecEnv(VecEnv):
         for remote in self.remotes:
             remote.send(('close', None))
         for p in self.ps:
-            p.join()
+            p.terminate()
+            p.join(0.1)
 
     @property
     def num_envs(self):
