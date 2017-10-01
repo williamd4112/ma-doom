@@ -225,7 +225,7 @@ class MACnnPolicy(object):
             h3 = conv_to_fc(h3)
             h4 = fc(h3, 'fc1', nh=512, init_scale=np.sqrt(2))
             h5 = fc(h4, 'fc2', nh=512, init_scale=np.sqrt(2))
-            h6 = fc(h4, 'fc3', nh=256, init_scale=np.sqrt(2)) # to give compatible network size
+            h6 = fc(h5, 'fc3', nh=256, init_scale=np.sqrt(2)) # to give compatible network size
             h6 = tf.reshape(h6, [nbatch, nplayers, -1])
 
             _reuse = False
