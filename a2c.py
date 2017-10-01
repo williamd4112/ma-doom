@@ -124,7 +124,7 @@ class Runner(object):
         self.gamma = gamma
         self.nsteps = nsteps
         self.states = model.init_state
-        self.dones = [False for _ in range(nenv)]
+        self.dones = [[False for x in range(nplayers)] for _ in range(nenv)]
 
     def update_obs(self, obs):
         nc = self.obs_shape[-1]
@@ -142,10 +142,12 @@ class Runner(object):
             obs, rewards, dones, _ = self.env.step(actions)
             self.states = states
             self.dones = dones
-            for n, done in enumerate(dones):
-                if done:
-                    self.obs[n] = self.obs[n]*0
-                    self.states = self.model.init_state
+            # the outer loop is per-env done,
+            # the inner loop is per-player done
+            for i, done in enumerate(dones):
+                for j, d in enumerate(done):
+                    if d:
+                        self.obs[i, j] = self.obs[i, j]*0
             self.update_obs(obs)
             mb_states.append(np.copy(self.states))
             mb_rewards.append(rewards)
@@ -153,15 +155,24 @@ class Runner(object):
         #batch of steps to batch of rollouts
         mb_obs = np.asarray(mb_obs, dtype=np.uint8).swapaxes(1, 0).reshape(self.batch_ob_shape)
         mb_states = np.asarray(mb_states, dtype=np.float32).swapaxes(1, 0).reshape([self.nenv*self.nsteps, -1])
-        mb_rewards = np.asarray(mb_rewards, dtype=np.float32).swapaxes(1, 0)
+        mb_rewards = np.asarray(mb_rewards, dtype=np.float32).swapaxes(1, 0).swapaxes(2, 1)
         mb_actions = np.asarray(mb_actions, dtype=np.int32).swapaxes(1, 0)
-        mb_values = np.asarray(mb_values, dtype=np.float32).swapaxes(1, 0)
-        mb_dones = np.asarray(mb_dones, dtype=np.bool).swapaxes(1, 0)
-        mb_masks = mb_dones[:, :-1]
-        mb_dones = mb_dones[:, 1:]
+        mb_values = np.asarray(mb_values, dtype=np.float32).swapaxes(1, 0).swapaxes(2, 1)
+        mb_dones = np.asarray(mb_dones, dtype=np.bool).swapaxes(1, 0).swapaxes(2, 1)
+        mb_masks = mb_dones[:, :, :-1]
+        mb_dones = mb_dones[:, :, 1:]
         last_values = self.model.value(self.obs, self.states, self.dones)
         #discount/bootstrap off value fn
-        for n, (rewards, dones, value) in enumerate(zip(mb_rewards, mb_dones, last_values)):
+        for i, (rewards, dones, value) in enumerate(zip(mb_rewards, mb_dones, last_values)):
+            for j, (r, d, v) in enumerate(zip(rewards, dones, value)):
+                r = r.tolist()
+                d = d.tolist()
+                if d[-1] == 0:
+                    r = discount_with_dones(np.asarray(r+[v]), d+[0], self.gamma)[:-1]
+                else:
+                    r = discount_with_dones(np.asarray(r), d, self.gamma)
+                mb_rewards[i, j] = r
+            """
             rewards = rewards.tolist()
             dones = dones.tolist()
             if dones[-1] == 0:
@@ -169,14 +180,16 @@ class Runner(object):
             else:
                 rewards = discount_with_dones(np.asarray(rewards), dones, self.gamma)
             mb_rewards[n] = rewards
+            """
 
         def _flatten(arr):
             return arr.reshape(-1)
 
-        mb_rewards = _flatten(mb_rewards)
+        mb_rewards = _flatten(mb_rewards.swapaxes(2,1))
+        mb_values = _flatten(mb_values.swapaxes(2,1))
+        mb_masks = mb_masks.swapaxes(2,1)
+        mb_masks = mb_masks.reshape(mb_masks.shape[0]*mb_masks.shape[1], -1)
         mb_actions = _flatten(mb_actions)
-        mb_values = _flatten(mb_values)
-        mb_masks = mb_masks.flatten()
         return mb_obs, mb_states, mb_rewards, mb_masks, mb_actions, mb_values
 
 def learn(policy, env, seed, checkpoint=0, nsteps=8, nstack=8, nplayers=2,

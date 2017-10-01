@@ -14,7 +14,7 @@ class MACommSepCriticPolicy(object):
         nact = ac_space.n
 
         X = tf.placeholder(tf.uint8, ob_shape, name='X')
-        M = tf.placeholder(tf.float32, [nbatch], name='M')
+        M = tf.placeholder(tf.float32, [nbatch, nplayers], name='M')
         S = tf.placeholder(tf.float32, [nbatch, nlstm*2], name='S')
 
         pis = []
@@ -88,7 +88,7 @@ class MACommPolicy(object):
         nact = ac_space.n
 
         X = tf.placeholder(tf.uint8, ob_shape, name='X')
-        M = tf.placeholder(tf.float32, [nbatch], name='M')
+        M = tf.placeholder(tf.float32, [nbatch, nplayers], name='M')
         S = tf.placeholder(tf.float32, [nbatch, nlstm*2], name='S')
 
         pis = []
@@ -107,8 +107,8 @@ class MACommPolicy(object):
             # instead of time-sequence, each rnn cell here
             # is responsible for "one player"
             xs = batch_to_seq(h4, nenv*nsteps, nplayers)
-            ms = tf.expand_dims(M, axis=1)
-            #ms = batch_to_seq( M, nenv*nsteps, nplayers)
+            #ms = tf.expand_dims(M, axis=1)
+            ms = batch_to_seq( M, nenv*nsteps, nplayers)
 
             mem, snew = lnmem(xs, ms, S, 'lstm1', nh=nlstm)
             mem = tf.reshape(mem, [nbatch, nlstm*2])

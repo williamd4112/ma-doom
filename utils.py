@@ -121,9 +121,9 @@ def lnmem(xs, ms, s, scope, nh, init_scale=1.0, activation=tf.nn.relu, reuse=Fal
         bc = tf.get_variable("bc", [nh], initializer=tf.constant_initializer(0.0))
 
     c, h = tf.split(axis=1, num_or_size_splits=2, value=s)
-    for idx, x in enumerate(xs):
-        c = c*(1-ms)
-        h = h*(1-ms)
+    for idx, (x, m) in enumerate(zip(xs, ms)):
+        c = c*(1-m)
+        h = h*(1-m)
         z = _ln(tf.matmul(x, wx), gx, bx) + _ln(tf.matmul(h, wh), gh, bh) + b
         i, f, o, u = tf.split(axis=1, num_or_size_splits=4, value=z)
         i = tf.nn.sigmoid(i)
