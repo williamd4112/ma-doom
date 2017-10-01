@@ -225,12 +225,13 @@ class MACnnPolicy(object):
             h3 = conv_to_fc(h3)
             h4 = fc(h3, 'fc1', nh=512, init_scale=np.sqrt(2))
             h5 = fc(h4, 'fc2', nh=512, init_scale=np.sqrt(2))
-            h5 = tf.reshape(h5, [nbatch, nplayers, -1])
+            h6 = fc(h4, 'fc3', nh=256, init_scale=np.sqrt(2)) # to give compatible network size
+            h6 = tf.reshape(h6, [nbatch, nplayers, -1])
 
             _reuse = False
             for i in range(nplayers):
-                pi = fc(h5[:,i], 'pi', nact, act=tf.identity, reuse=_reuse)
-                vf = fc(h5[:,i], 'v', 1, act=tf.identity, reuse=_reuse)
+                pi = fc(h6[:,i], 'pi', nact, act=tf.identity, reuse=_reuse)
+                vf = fc(h6[:,i], 'v', 1, act=tf.identity, reuse=_reuse)
                 pis.append(pi)
                 vfs.append(vf)
                 _reuse = True
