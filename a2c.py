@@ -17,6 +17,7 @@ from utils import Scheduler, make_path, find_trainable_variables
 from utils import cat_entropy, mse
 TINY = 1e-8
 
+recon_policies = ['MAReconPolicy']
 
 class Model(object):
 
@@ -29,13 +30,16 @@ class Model(object):
         config.gpu_options.allow_growth = True
         sess = tf.Session(config=config)
         nact = ac_space.n
-        nbatch = nenvs*nsteps*nplayers
+        nbatch = nenvs*nsteps
 
         # set i/o placeholders
-        A = tf.placeholder(tf.int32, [nbatch])
-        ADV = tf.placeholder(tf.float32, [nbatch])
-        R = tf.placeholder(tf.float32, [nbatch])
+        use_recon = policy.__name__ in recon_policies # check if it's a model that requires reconstruction.
+        recon_shape = [0] if not use_recon else [nbatch*nplayers*512]
+        A = tf.placeholder(tf.int32, [nbatch*nplayers])
+        ADV = tf.placeholder(tf.float32, [nbatch*nplayers])
+        R = tf.placeholder(tf.float32, [nbatch*nplayers])
         LR = tf.placeholder(tf.float32, [])
+        RECON = tf.placeholder(tf.float32, recon_shape)
 
         step_model = policy(sess, ob_space, ac_space, nenvs, 1, nstack, nplayers, reuse=False)
         train_model = policy(sess, ob_space, ac_space, nenvs, nsteps, nstack, nplayers, reuse=True)
@@ -45,6 +49,17 @@ class Model(object):
         vf_loss = tf.reduce_mean(mse(tf.squeeze(train_model.vf), R))
         entropy = tf.reduce_mean(cat_entropy(train_model.pi))
         loss = pg_loss - entropy * ent_coef + vf_loss * vf_coef
+
+        rec_loss = tf.zeros([1], dtype=tf.float32) # dummy
+        if use_recon:
+            # recon loss will flow back to rt from RECON.
+            # so no need to give it gradient twice.
+            rec_loss = tf.reduce_mean(
+                            mse(tf.stop_gradient(
+                                tf.reshape(train_model.rt, recon_shape)),
+                                RECON)
+                            )
+            loss += rec_loss
 
         params = find_trainable_variables("model")
         grads = tf.gradients(loss, params)
@@ -58,19 +73,20 @@ class Model(object):
         lr = Scheduler(v=lr, nvalues=total_timesteps, schedule=lrschedule)
 
 
-        def train(obs, states, rewards, masks, actions, values):
+        def train(obs, states, recons, rewards, masks, actions, values):
             advs = rewards - values
             for step in range(len(obs)):
                 cur_lr = lr.value()
-            td_map = {train_model.X:obs, A:actions, ADV:advs, R:rewards, LR:cur_lr}
+            tensors = [pg_loss, rec_loss, vf_loss, entropy, _train, self.summary_op]
+            td_map = {train_model.X:obs, A:actions, ADV:advs, R:rewards, LR:cur_lr, RECON:recons}
             if states != []:
                 td_map[train_model.S] = states
                 td_map[train_model.M] = masks
-            policy_loss, value_loss, policy_entropy, _, summary = sess.run(
-                    [pg_loss, vf_loss, entropy, _train, self.summary_op],
+            policy_loss, recon_loss, value_loss, policy_entropy, _, summary = sess.run(
+                    tensors,
                     td_map
             )
-            return policy_loss, value_loss, policy_entropy, summary
+            return policy_loss, recon_loss, value_loss, policy_entropy, summary
 
         def save(save_path, postfix):
             ps = sess.run(params)
@@ -132,11 +148,12 @@ class Runner(object):
         self.obs[:, :, :, :, -nc:] = obs
 
     def run(self):
-        mb_obs, mb_states, mb_rewards, mb_actions, mb_values, mb_dones = [], [], [], [], [], []
+        mb_obs, mb_states, mb_rewards, mb_recons, mb_actions, mb_values, mb_dones = [], [], [], [], [], [], []
         for n in range(self.nsteps):
-            actions, values, states = self.model.step(self.obs, self.states, self.dones)
+            actions, values, states, recons = self.model.step(self.obs, self.states, self.dones)
             mb_obs.append(np.copy(self.obs))
             mb_actions.append(actions)
+            mb_recons.append(recons)
             mb_values.append(values)
             mb_dones.append(self.dones)
             obs, rewards, dones, _ = self.env.step(actions)
@@ -155,6 +172,7 @@ class Runner(object):
         #batch of steps to batch of rollouts
         mb_obs = np.asarray(mb_obs, dtype=np.uint8).swapaxes(1, 0).reshape(self.batch_ob_shape)
         mb_states = np.asarray(mb_states, dtype=np.float32).swapaxes(1, 0).reshape([self.nenv*self.nsteps, -1])
+        mb_recons = np.asarray(mb_recons, dtype=np.float32).swapaxes(1, 0).reshape([self.nenv*self.nsteps*self.nplayers, -1])
         mb_rewards = np.asarray(mb_rewards, dtype=np.float32).swapaxes(1, 0).swapaxes(2, 1)
         mb_actions = np.asarray(mb_actions, dtype=np.int32).swapaxes(1, 0)
         mb_values = np.asarray(mb_values, dtype=np.float32).swapaxes(1, 0).swapaxes(2, 1)
@@ -189,8 +207,9 @@ class Runner(object):
         mb_values = _flatten(mb_values.swapaxes(2,1))
         mb_masks = mb_masks.swapaxes(2,1)
         mb_masks = mb_masks.reshape(mb_masks.shape[0]*mb_masks.shape[1], -1)
+        mb_recons = _flatten(mb_recons)
         mb_actions = _flatten(mb_actions)
-        return mb_obs, mb_states, mb_rewards, mb_masks, mb_actions, mb_values
+        return mb_obs, mb_states, mb_recons, mb_rewards, mb_masks, mb_actions, mb_values
 
 def learn(policy, env, seed, checkpoint=0, nsteps=8, nstack=8, nplayers=2,
         total_timesteps=int(80e6), vf_coef=0.5, ent_coef=0.01,
@@ -226,9 +245,9 @@ def learn(policy, env, seed, checkpoint=0, nsteps=8, nstack=8, nplayers=2,
 
     for update in range(1, total_timesteps//nbatch+1):
         # Collect batch of samples
-        obs, states, rewards, masks, actions, values = runner.run()
+        obs, states, recons, rewards, masks, actions, values = runner.run()
         # Train on batch
-        policy_loss, value_loss, policy_entropy, summary = model.train(obs, states, rewards, masks, actions, values)
+        policy_loss, recon_loss, value_loss, policy_entropy, summary = model.train(obs, states, recons, rewards, masks, actions, values)
         nseconds = time.time()-tstart
         fps = int((update*nbatch)/nseconds)
         current_ckpt += 1
@@ -241,6 +260,7 @@ def learn(policy, env, seed, checkpoint=0, nsteps=8, nstack=8, nplayers=2,
             logger.record_tabular("total_timesteps", update*nbatch)
             logger.record_tabular("fps", fps)
             logger.record_tabular("policy_entropy", float(policy_entropy))
+            logger.record_tabular("recon_loss", float(recon_loss))
             logger.record_tabular("value_loss", float(value_loss))
             logger.record_tabular("explained variance", float(ev))
             rewards = rewards.reshape(-1, 2)

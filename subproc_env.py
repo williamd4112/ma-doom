@@ -3,21 +3,22 @@ import numpy as np
 from multiprocessing import Process, Pipe
 from baselines.common.vec_env import VecEnv
 
-def step(env, data):
+def step(env, data, dfn):
     ob, reward, done, info = env.step(data)
-    all_done = all(done)
-    if all_done:
+    check_done = dfn(done)
+    if check_done:
         ob = env.reset()
     return (ob, reward, done, info)
 
 def worker(remote, env_fn_wrapper):
 
     env = env_fn_wrapper.x()
+    dfn = env_fn_wrapper.dfn # function to determine done. It's either any() or all().
     while True:
         cmd, data = remote.recv()
         try:
             if cmd == 'step':
-                remote.send(step(env, data))
+                remote.send(step(env, data, dfn))
             elif cmd == 'reset':
                 ob = env.reset()
                 remote.send(ob)
@@ -33,7 +34,7 @@ def worker(remote, env_fn_wrapper):
             env = env_fn_wrapper.x()
             ob = env.reset()
             if cmd == 'step':
-                remote.send(step(env, data))
+                remote.send(step(env, data, dfn))
             elif cmd == 'reset':
                 remote.send(ob)
             elif cmd == 'close':
@@ -48,8 +49,9 @@ class CloudpickleWrapper(object):
     """
     Uses cloudpickle to serialize contents (otherwise multiprocessing tries to use pickle)
     """
-    def __init__(self, x):
+    def __init__(self, x, dfn):
         self.x = x
+        self.dfn = dfn
     def __getstate__(self):
         import cloudpickle
         return cloudpickle.dumps(self.x)
@@ -58,13 +60,13 @@ class CloudpickleWrapper(object):
         self.x = pickle.loads(ob)
 
 class SubprocVecEnv(VecEnv):
-    def __init__(self, env_fns):
+    def __init__(self, env_fns, dfn):
         """
         envs: list of gym environments to run in subprocesses
         """
         nenvs = len(env_fns)
         self.remotes, self.work_remotes = zip(*[Pipe() for _ in range(nenvs)])
-        self.ps = [Process(target=worker, args=(work_remote, CloudpickleWrapper(env_fn)))
+        self.ps = [Process(target=worker, args=(work_remote, CloudpickleWrapper(env_fn, dfn)))
             for (work_remote, env_fn) in zip(self.work_remotes, env_fns)]
         for p in self.ps:
             p.start()
