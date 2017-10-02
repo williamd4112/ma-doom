@@ -89,8 +89,7 @@ class SubprocVecEnv(VecEnv):
         for remote in self.remotes:
             remote.send(('close', None))
         for p in self.ps:
-            p.terminate()
-            p.join(0.1)
+            p.join()
 
     @property
     def num_envs(self):

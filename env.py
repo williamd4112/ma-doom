@@ -65,6 +65,9 @@ class GymDoomSyncMultiPlayerEnvironment(gym.Env):
 
         return next_states, rewards, done, info
 
+    def _close(self):
+        self.doom_env.close()
+
 class WarpFrame(gym.ObservationWrapper):
     def __init__(self, env, res=84, channel=3):
         gym.ObservationWrapper.__init__(self, env)
@@ -136,12 +139,13 @@ def wrap_ma_doom(config, nplayers, port):
     return env
 
 if __name__ == '__main__':
+    import gc
     env = GymDoomSyncMultiPlayerEnvironment('data/defend_the_center_coop.cfg', 2)
     env = WarpFrame(env)
     env = NdarrayEnv(env)
     env = MaxAndSkipEnv(env, nplayers=2)
     env.reset()
-    for step in range(100):
+    for step in range(10):
         print('Step %d' % (step))
         act = [ env.action_space.sample(), env.action_space.sample()]
         print(env.action_space)
@@ -150,3 +154,6 @@ if __name__ == '__main__':
         print(next_state.shape, reward.shape)
         if done:
             x = env.reset()
+    print("closing")
+    env.close()
+    #gc.collect()
