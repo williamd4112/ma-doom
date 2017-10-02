@@ -44,11 +44,11 @@ class MACommSepCriticPolicy(object):
             _reuse = False
             for i in range(nplayers):
                 # shared critic, separate from policy module
-                vf = fc(mem, 'vf', nh=1, act=tf.identity, reuse=_reuse)
-                _vf = tf.stop_gradient(vf)
+                cvf = fc(mem, 'cvf', nh=1, act=tf.identity, reuse=_reuse)
 
-                h5 = fc(tf.concat([_vf, h4[:,i]], axis=1), 'fc-pi', nh=512, init_scale=np.sqrt(2), reuse=_reuse)
+                h5 = fc(tf.concat([cvf, h4[:,i]], axis=1), 'fc-pi', nh=512, init_scale=np.sqrt(2), reuse=_reuse)
                 pi = fc(h5, 'pi', nact, act=tf.identity, reuse=_reuse)
+                vf = fc(h5, 'vf', nh=1, act=tf.identity, reuse=_reuse)
                 pis.append(pi)
                 vfs.append(vf)
                 _reuse = True
