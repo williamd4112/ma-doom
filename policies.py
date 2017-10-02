@@ -5,6 +5,69 @@ from baselines.common.distributions import make_pdtype
 import baselines.common.tf_util as U
 import gym
 
+class MAReconPolicy(object):
+    def __init__(self, sess, ob_space, ac_space, nenv,
+                    nsteps, nstack, nplayers, reuse=False):
+        nbatch = nenv * nsteps
+        nh, nw, nc = ob_space.shape
+        ob_shape = (nbatch, nplayers, nh, nw, nc*nstack)
+        nact = ac_space.n
+        X = tf.placeholder(tf.uint8, ob_shape) #obs
+
+        pis = []
+        vfs = []
+        recons = []
+
+        with tf.variable_scope("model", reuse=reuse):
+            x = tf.cast(X, tf.float32)/255.
+            h = conv(tf.cast(x, tf.float32)/255., 'c1', nf=32, rf=8, stride=4, init_scale=np.sqrt(2), reuse=reuse)
+            h2 = conv(h, 'c2', nf=64, rf=4, stride=2, init_scale=np.sqrt(2), reuse=reuse)
+            h3 = conv(h2, 'c3', nf=64, rf=3, stride=1, init_scale=np.sqrt(2), reuse=reuse)
+            h3 = conv_to_fc(h3)
+            h4 = fc(h3, 'fc1', nh=512, init_scale=np.sqrt(2), reuse=reuse)
+            enc = fc(enc, 'enc', nh=128, init_scale=np.sqrt(2), reuse=reuse)
+
+            h4 = tf.reshape(h4, [nbatch, nplayers, -1])
+            enc = tf.reshape(enc, [nbatch, nplayers, -1])
+
+
+        _reuse = reuse
+        for i in range(nplayers):
+            with tf.variable_scope("model", reuse=_reuse):
+                recon = fc(enc[:,(i+1)%nplayers], 'recon', nh=512, init_scale=np.sqrt(2), reuse=_reuse)
+                feat = tf.concat([h4[:,i], recon])
+                h5 = fc(feat, 'feat', nh=512, init_scale=np.sqrt(2), reuse=_reuse)
+                pi = fc(h5, 'pi', nact, act=tf.identity, reuse=_reuse)
+                vf = fc(h5, 'vf', nh=1, act=tf.identity, reuse=_reuse)
+            pis.append(pi)
+            vfs.append(vf)
+            recons.append(recon)
+
+        v0 = tf.reshape(vf, [-1,])
+        a0 = tf.reshape(sample(pi), [-1,])
+        self.init_state = []
+
+
+        def step(ob, *_args, **_kwargs):
+            a, v = sess.run([a0, v0], {X:ob})
+            a = [a[i:i+nplayers] for i in range(0, len(a), nplayers)]
+            v = [v[i:i+nplayers] for i in range(0, len(v), nplayers)]
+            return a, v, [] #dummy state
+
+        def value(ob, *_args, **_kwargs):
+            v = sess.run(v0, {X:ob})
+            v = [v[i:i+nplayers] for i in range(0, len(v), nplayers)]
+            return v
+
+        self.X = X
+        self.pi = i
+        self.vf = vf
+        self.step = step
+        self.value = value
+
+
+
+
 class MACommSepCriticPolicy(object):
     def __init__(self, sess, ob_space, ac_space, nenv, nsteps, nstack,
             nplayers, nlstm=256, reuse=False):
@@ -52,10 +115,10 @@ class MACommSepCriticPolicy(object):
                 pis.append(pi)
                 vfs.append(vf)
                 _reuse = True
-            pi = tf.concat(pis, axis=0)
-            vf = tf.concat(vfs, axis=0)
+            pi = tf.reshape(tf.concat(pis, axis=1), [nbatch*nplayers, -1])
+            vf = tf.reshape(tf.concat(vfs, axis=1), [nbatch*nplayers, -1])
 
-        v0 = vf[:, 0]
+        v0 = vf
         a0 = sample(pi)
         self.init_state = np.zeros((nbatch, nlstm*2), dtype=np.float32)
 
@@ -119,16 +182,17 @@ class MACommPolicy(object):
             _reuse = False
             for i in range(nplayers):
                 h5 = fc(tf.concat([mem, h4[:,i]], axis=1), 'fc-pi', nh=512, init_scale=np.sqrt(2), reuse=_reuse)
-                pi = fc(h5, 'pi', nact, act=tf.identity, reuse=_reuse)
+                pi = tf.expand_dims(fc(h5, 'pi', nact, act=tf.identity, reuse=_reuse), axis=1)
                 vf = fc(h5, 'v', 1, act=tf.identity, reuse=_reuse)
                 pis.append(pi)
                 vfs.append(vf)
                 _reuse = True
-            pi = tf.concat(pis, axis=0)
-            vf = tf.concat(vfs, axis=0)
+            pi = tf.reshape(tf.concat(pis, axis=1), [nbatch*nplayers, -1])
+            vf = tf.reshape(tf.concat(vfs, axis=1), [nbatch*nplayers, -1])
 
-        v0 = vf[:, 0]
+        v0 = vf
         a0 = sample(pi)
+
         self.init_state = np.zeros((nbatch, nlstm*2), dtype=np.float32)
 
         def step(ob, state, mask):
@@ -178,10 +242,10 @@ class MACnnSepPolicy(object):
             pis.append(pi)
             vfs.append(vf)
             _reuse = True
-        pi = tf.concat(pis, axis=0)
-        vf = tf.concat(vfs, axis=0)
+        pi = tf.reshape(tf.concat(pis, axis=1), [nbatch*nplayers, -1])
+        vf = tf.reshape(tf.concat(vfs, axis=1), [nbatch*nplayers, -1])
 
-        v0 = vf[:, 0]
+        v0 = vf
         a0 = sample(pi)
         self.init_state = []
 
@@ -238,8 +302,8 @@ class MACnnPolicy(object):
             pi = tf.concat(pis, axis=0)
             vf = tf.concat(vfs, axis=0)
 
-        v0 = vf[:, 0]
-        a0 = sample(pi)
+        v0 = tf.reshape(vf, [-1,])
+        a0 = tf.reshape(sample(pi), [-1,])
         self.init_state = []
 
 

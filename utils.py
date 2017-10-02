@@ -122,16 +122,14 @@ def lnmem(xs, ms, s, scope, nh, init_scale=1.0, activation=tf.nn.relu, reuse=Fal
 
     c, h = tf.split(axis=1, num_or_size_splits=2, value=s)
     for idx, (x, m) in enumerate(zip(xs, ms)):
-        c = c*(1-m)
-        h = h*(1-m)
         z = _ln(tf.matmul(x, wx), gx, bx) + _ln(tf.matmul(h, wh), gh, bh) + b
         i, f, o, u = tf.split(axis=1, num_or_size_splits=4, value=z)
         i = tf.nn.sigmoid(i)
         f = tf.nn.sigmoid(f)
         o = tf.nn.sigmoid(o)
         u = activation(u)
-        c = f*c + i*u
-        h = o*activation(_ln(c, gc, bc))
+        c = (f*c + i*u) * (1 - m) + c * m
+        h = o * activation(_ln(c, gc, bc)) * (1 - m) + h * m
         xs[idx] = h
     s = tf.concat(axis=1, values=[c, h])
     return xs, s
