@@ -103,6 +103,51 @@ def _ln(x, g, b, e=1e-5, axes=[1]):
     x = x*g+b
     return x
 
+def nmap(xs, s, coords, scope, nplayers=2, n=15, feat=32, init_scale=1.0,  activation=tf.nn.relu, reuse=False):
+    nbatch, nin = [v.value for v in xs[0].get_shape()]
+    # s should be of shape [nbatch, n, n]
+    with tf.variable_scope(scope, reuse=reuse):
+        # global read op
+        r1 = conv(s, "conv-r1", nf=32, rf=3, stride=1, init_scale=np.sqrt(2))
+        r2 = conv(r1, "conv-r2", nf=32, rf=3, stride=1, init_scale=np.sqrt(2))
+        r3 = conv(r2, "conv-r3", nf=32, rf=3, stride=1, init_scale=np.sqrt(2))
+        r3 = conv_to_fc(r3)
+        r4 = fc(r3, "fc-r4", nh=256, init_scale=init_scale)
+        r5 = fc(r4, "glob-r", nh=feat, init_scale=init_scale)
+
+        # context based read op
+
+    _reuse = reuse
+    for i, (x, coord) in enumerate(zip(xs, coords)):
+        """
+        q = fc(tf.concat([x, r5], axis=1), "c-query", nh=feat, init_scale=init_scale, reuse=_reuse)
+        q = tf.reshape(q, [-1, 1, 1, feat])
+        alpha = tf.reshape(tf.nn.softmax(tf.reduce_sum(s * q, axis=3)), [-1, n, n, 1])
+        c = tf.reduce_sum(s * alpha, axis=[1, 2])
+        """
+        # key-val retrieval
+        q = fc(tf.concat([x, r5], axis=1), "c-query", nh=feat/2, init_scale=np.sqrt(2), reuse=_reuse)
+        k, v = tf.split(axis=3, num_or_size_splits=2, value=s)
+        q = tf.reshape(q, [-1, 1, 1, feat//2])
+        alpha = tf.reshape(tf.nn.softmax(tf.reduce_sum(k * q, axis=3)), [-1, n, n, 1])
+        c = tf.reduce_sum(v * alpha, axis=[1, 2])
+
+        # write to position a, b
+        batch_idx = tf.range(0, nbatch)
+        batch_idx = tf.reshape(batch_idx, [-1, 1])
+        coord = tf.concat([batch_idx, coord], axis=1)
+        s_coord = tf.gather_nd(s, indices=coord)
+        w = fc(tf.concat([x, r5, c, s_coord], axis=1), "write", nh=feat, init_scale=np.sqrt(2), reuse=_reuse)
+        mem_new = tf.scatter_nd_update(s, indices=coord, updates=w)
+        _reuse = True
+        xs[i] = c
+
+    return xs, mem_new
+
+
+
+
+
 def lnmem(xs, ms, s, scope, nh, init_scale=1.0, activation=tf.nn.relu, reuse=False):
     nbatch, nin = [v.value for v in xs[0].get_shape()]
     nsteps = len(xs)
@@ -138,6 +183,7 @@ def lnmem(xs, ms, s, scope, nh, init_scale=1.0, activation=tf.nn.relu, reuse=Fal
 def lnlstm(xs, ms, s, scope, nh, init_scale=1.0, reuse=False):
     nbatch, nin = [v.value for v in xs[0].get_shape()]
     nsteps = len(xs)
+    s = tf.identity(s)
     with tf.variable_scope(scope, reuse=reuse):
         wx = tf.get_variable("wx", [nin, nh*4], initializer=ortho_init(init_scale))
         gx = tf.get_variable("gx", [nh*4], initializer=tf.constant_initializer(1.0))

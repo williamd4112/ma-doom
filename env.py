@@ -1,7 +1,7 @@
 from vizdoom_map.ma_doom_env import DoomSyncMultiPlayerEnvironment
 import numpy as np
 import random
-import time
+import time, logging
 
 from collections import deque
 import gym
@@ -69,15 +69,18 @@ class GymDoomSyncMultiPlayerEnvironment(gym.Env):
         self.doom_env.close()
 
 class WarpFrame(gym.ObservationWrapper):
-    def __init__(self, env, res=84, channel=3):
+    def __init__(self, env, res=84, grayscale=True):
+        self.grayscale = grayscale
+        self.channel = 3 if not grayscale else 1
         gym.ObservationWrapper.__init__(self, env)
         self.res = res
-        self.channel = channel
         self.observation_space = spaces.Box(low=0, high=255, shape=(self.res, self.res, self.channel))
 
     def _observation(self, obs):
         frames = []
         for i, frame in enumerate(obs):
+            if self.grayscale:
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             frames.append(cv2.resize(frame, (self.res, self.res)))
         #frames = [cv2.resize(frame, (self.res, self.res)) for frame in obs]
         return [ frame.reshape((self.res, self.res, self.channel)) for frame in frames]
@@ -140,7 +143,7 @@ def wrap_ma_doom(config, nplayers, port):
 
 if __name__ == '__main__':
     import gc
-    env = GymDoomSyncMultiPlayerEnvironment('data/defend_the_center_coop.cfg', 2)
+    env = GymDoomSyncMultiPlayerEnvironment('data/triple_lines_easy.cfg', 2)
     env = WarpFrame(env)
     env = NdarrayEnv(env)
     env = MaxAndSkipEnv(env, nplayers=2)

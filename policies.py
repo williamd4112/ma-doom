@@ -1,9 +1,85 @@
 import numpy as np
 import tensorflow as tf
-from utils import conv, fc, conv_to_fc, batch_to_seq, seq_to_batch, lstm, lnlstm, sample, check_shape, lnmem
+from utils import conv, fc, conv_to_fc, batch_to_seq, seq_to_batch, lstm, lnlstm, sample, check_shape, lnmem, nmap
 from baselines.common.distributions import make_pdtype
 import baselines.common.tf_util as U
 import gym
+
+class MANMapPolicy(object):
+    def __init__(self, sess, ob_space, ac_space, nenv, nsteps, nstack,
+            nplayers, map_size=[15, 15, 32], reuse=False):
+        nbatch = nenv * nsteps
+        nh, nw, nc = ob_space.shape
+        ob_shape = (nbatch, nplayers, nh, nw, nc*nstack)
+        nact = ac_space.n
+
+        X = tf.placeholder(tf.uint8, ob_shape, name='X')
+        MAP = tf.placeholder(tf.float32, [nbatch,] + map_size, name='MEM')
+        C = tf.placeholder(tf.int32, [nbatch, nplayers, 2])
+
+        pis = []
+        vfs = []
+
+        with tf.variable_scope("model", reuse=reuse):
+            # tuck observation from all players at once
+            x = tf.reshape(tf.cast(X, tf.float32)/255., [nbatch*nplayers, nh, nw, nc*nstack])
+            m = tf.get_variable("mem-var", shape=MAP.get_shape(), trainable=False)
+            m = tf.assign(m, MAP)
+
+            h1 = conv( x, 'conv1', nf=32, rf=8, stride=4, init_scale=np.sqrt(2))
+            h2 = conv(h1, 'conv2', nf=64, rf=4, stride=2, init_scale=np.sqrt(2))
+            h3 = conv(h2, 'conv3', nf=64, rf=3, stride=1, init_scale=np.sqrt(2))
+            h3 = conv_to_fc(h3)
+            h4 = fc(h3, 'fc1', nh=512, init_scale=np.sqrt(2))
+
+            # shared memory:
+            # instead of time-sequence, each rnn cell here
+            # is responsible for "one player"
+
+            # mem_size : half for key, half for value
+            xs = batch_to_seq(h4, nenv*nsteps, nplayers)
+            crds = batch_to_seq(C, nenv*nsteps, nplayers)
+            context, map_new = nmap(xs, m, crds, 'mem', nplayers, n=map_size[1], feat=map_size[-1])
+            h4 = tf.reshape(h4, [nbatch, nplayers, -1])
+            context = tf.reshape(context, [nbatch, nplayers, -1])
+
+            # compute pi, vaule for each agents
+
+            _reuse = False
+            for i in range(nplayers):
+                h5 = fc(tf.concat([context[:, i], h4[:,i]], axis=1), 'fc-pi', nh=512, init_scale=np.sqrt(2), reuse=_reuse)
+                pi = fc(h5, 'pi', nact, act=tf.identity, reuse=_reuse)
+                vf = fc(h5, 'v', 1, act=tf.identity, reuse=_reuse)
+                pis.append(pi)
+                vfs.append(vf)
+                _reuse = True
+            pi = tf.reshape(tf.concat(pis, axis=1), [nbatch*nplayers, -1])
+            vf = tf.reshape(tf.concat(vfs, axis=1), [nbatch*nplayers, -1])
+
+        v0 = vf
+        a0 = sample(pi)
+
+        self.init_state = np.zeros([nbatch,]+map_size, dtype=np.float32)
+
+        def step(ob, maps, coords):
+            a, v, m = sess.run([a0, v0, map_new], {X:ob, MAP:maps, C:coords})
+            a = [a[i:i+nplayers] for i in range(0, len(a), nplayers)]
+            v = [v[i:i+nplayers] for i in range(0, len(v), nplayers)]
+            return a, v, m, [] # dummy recon
+
+        def value(ob, state, mask):
+            v = sess.run(v0, {X:ob, S:state, M:mask})
+            v = [v[i:i+nplayers] for i in range(0, len(v), nplayers)]
+            return v
+
+        self.X = X
+        self.MAP = MAP # to meet the a2c.py protocol.
+        self.pi = pi
+        self.vf = vf
+        self.step = step
+        self.value = value
+
+
 
 class MAReconPolicy(object):
     def __init__(self, sess, ob_space, ac_space, nenv,
@@ -210,17 +286,8 @@ if __name__ == '__main__':
     config.gpu_options.allow_growth = True
 
     with tf.Session(config=config) as sess:
-        model = MACnnPolicy(sess, spaces.Box(low=0, high=255, shape=(84, 84, 3)), spaces.Discrete(3), 8, 4, 4, 2)
+        model = MANMapPolicy(sess, spaces.Box(low=0, high=255, shape=(84, 84, 3)), spaces.Discrete(3), 8, 4, 4, 2)
         tf.global_variables_initializer().run(session=sess)
-        print(model.pi)
-        print(model.vf)
 
-        rets = (model.step(np.random.rand(32, 2, 84, 84, 12)))
-        #for a in rets[0]:
-        #    print(a)
-        #for v in rets[1]:
-        #    print(v)
-        print(rets[0].shape)
-        print(rets[1].shape)
-        rets = (model.value(np.random.rand(32, 2, 84, 84, 12)))
-        print(rets.shape)
+        rets = (model.step(np.random.rand(32, 2, 84, 84, 12), np.random.rand(32,15,15,32), np.random.randint(0, 2, (32, 2, 2))))
+        print(rets)
