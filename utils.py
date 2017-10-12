@@ -118,6 +118,7 @@ def nmap(xs, s, coords, scope, nplayers=2, n=15, feat=32, init_scale=1.0,  activ
         # context based read op
 
     _reuse = reuse
+    ws = []
     for i, (x, coord) in enumerate(zip(xs, coords)):
         """
         q = fc(tf.concat([x, r5], axis=1), "c-query", nh=feat, init_scale=init_scale, reuse=_reuse)
@@ -140,9 +141,10 @@ def nmap(xs, s, coords, scope, nplayers=2, n=15, feat=32, init_scale=1.0,  activ
         w = fc(tf.concat([x, r5, c, s_coord], axis=1), "write", nh=feat, init_scale=np.sqrt(2), reuse=_reuse)
         mem_new = tf.scatter_nd_update(s, indices=coord, updates=w)
         _reuse = True
+        ws.append(w)
         xs[i] = c
 
-    return xs, mem_new
+    return xs, r5, ws, mem_new
 
 
 
