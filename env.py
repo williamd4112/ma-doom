@@ -83,6 +83,9 @@ class GymPredatorPreySyncMultiPlayerEnvironment(gym.Env):
         # Get action space
         self.action_space = spaces.Discrete(len(self.env.actions))
 
+        # Render the environment
+        self.env.render()
+
         # Get observation space
         dim = tuple(self.env.renderer.get_screenshot_dim())
         self.observation_space = spaces.Box(low=0, high=255, shape=dim)
