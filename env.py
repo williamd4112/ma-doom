@@ -1,5 +1,5 @@
 from vizdoom_map.ma_doom_env import DoomSyncMultiPlayerEnvironment
-from pygame_rl.scenario.predator_prey_environment import PredatorPreyEnvironment
+from pygame_rl.scenario.predator_prey_environment import PredatorPreyEnvironment, PredatorPreyEnvironmentOptions
 import numpy as np
 import random
 import time
@@ -176,26 +176,38 @@ def wrap_ma_doom(config, nplayers, port):
     env = MaxAndSkipEnv(env, nplayers)
     return env
 
+def wrap_predator_prey(config):
+    object_size = {
+        "PREDATOR": config.npredator,
+        "PREY": config.nprey,
+        "OBSTACLE": config.nobstacle
+    }
+    print(config.map_path)
+    env_options = PredatorPreyEnvironmentOptions(
+                        map_path=config.map_path,
+                        object_size=object_size,
+                        ai_frame_skip=config.frame_skip
+                  )
+    env = GymPredatorPreySyncMultiPlayerEnvironment(env_options)
+
+
 
 def main():
-    import gc
-    env = GymDoomSyncMultiPlayerEnvironment('data/triple_lines_easy.cfg', 2)
-    env = WarpFrame(env)
-    env = NdarrayEnv(env)
-    env = MaxAndSkipEnv(env, nplayers=2)
+    import argparse
+    config = argparse.ArgumentParser()
+    config.parse_args()
+    config.npredator = 3
+    config.nprey = 3
+    config.nobstacle = 8
+    config.map_path = "data/map/predator_prey/predator_prey_15x15.tmx"
+    config.frame_skip = 2
+    env = wrap_predator_prey(config)
     env.reset()
-    for step in range(10):
-        print('Step %d' % (step))
-        act = [env.action_space.sample(), env.action_space.sample()]
-        print(env.action_space)
-        print(act)
-        next_state, reward, done, _ = env.step(act)
-        print(next_state.shape, reward.shape)
-        if done:
-            x = env.reset()
-    print("closing")
-    env.close()
-    # gc.collect()
+
+    for i in range(10):
+        obs, reward, done, info = env.step(0)
+        print("{}, {}, {}, {}".format(obs, reward, done, info))
+
 
 
 if __name__ == '__main__':
