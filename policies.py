@@ -138,6 +138,7 @@ class MACommPolicy(object):
         v0 = vf
         a0 = sample(pi)
 
+        self.init_map = []
         self.init_state = np.zeros((nbatch, nlstm*2), dtype=np.float32)
 
         def step(ob, state, mask):
@@ -197,6 +198,7 @@ class MACnnPolicy(object):
         v0 = vf
         a0 = sample(pi)
 
+        self.init_map = []
         self.init_state = []
 
 

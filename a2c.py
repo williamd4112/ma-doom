@@ -129,7 +129,7 @@ class Runner(object):
         self.nsteps = nsteps
         self.states = model.init_state
         self.maps = model.init_map
-        self.map_size = map_size
+        self.map_size = map_size if model.init_map != [] else [-1]
         self.dones = [[False for x in range(nplayers)] for _ in range(nenv)]
 
     def update_obs(self, obs):
@@ -163,7 +163,8 @@ class Runner(object):
             for i, done in enumerate(dones):
                 if done[0]:
                     self.obs[i, :] = self.obs[i, :]*0
-                    self.maps[i] = self.maps[i]*0
+                    if self.maps != []:
+                        self.maps[i] = self.maps[i]*0
             self.update_obs(obs)
             mb_states.append(np.copy(self.states))
             mb_maps.append(np.copy(maps))
@@ -207,6 +208,7 @@ class Runner(object):
         mb_masks = mb_masks.swapaxes(2,1)
         mb_masks = mb_masks.reshape(mb_masks.shape[0]*mb_masks.shape[1], -1)
         mb_actions = _flatten(mb_actions)
+
         return mb_obs, mb_maps, mb_coords, mb_states, mb_rewards, mb_masks, mb_actions, mb_values
 
 def learn(policy, env, seed, checkpoint=0, nsteps=8, nstack=8, nplayers=2,
