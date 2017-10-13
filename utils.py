@@ -115,8 +115,6 @@ def nmap(xs, s, coords, scope, nplayers=2, n=15, feat=32, init_scale=1.0,  activ
         r4 = fc(r3, "fc-r4", nh=256, init_scale=init_scale)
         r5 = fc(r4, "glob-r", nh=feat, init_scale=init_scale)
 
-        # context based read op
-
     _reuse = reuse
     ws = []
     for i, (x, coord) in enumerate(zip(xs, coords)):

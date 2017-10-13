@@ -75,10 +75,12 @@ class GymDoomSyncMultiPlayerEnvironment(gym.Env):
 
 class GymPredatorPreySyncMultiPlayerEnvironment(gym.Env):
     metadata = {'render.modes': ['human', 'rgb_array']}
+    act_map = ["MOVE_RIGHT", "MOVE_UP", "MOVE_LEFT", "MOVE_DOWN", "STAND"]
 
-    def __init__(self, env_options):
+    def __init__(self, env_options, res=84):
         # Create the environment
         self.env = PredatorPreyEnvironment(env_options=env_options)
+        self.res = res
 
         # Get action space
         self.action_space = spaces.Discrete(len(self.env.actions))
@@ -87,20 +89,37 @@ class GymPredatorPreySyncMultiPlayerEnvironment(gym.Env):
         self.env.render()
 
         # Get observation space
-        dim = tuple(self.env.renderer.get_screenshot_dim())
-        self.observation_space = spaces.Box(low=0, high=255, shape=dim)
+        self.observation_space = spaces.Box(low=0, high=255, shape=(self.res, self.res, 1))
+        self.predator_idx_rng = self.env.get_group_index_range("PREDATOR")
 
     def _reset(self):
         self.env.reset()
-        return self.env.state
+        return self._proc_obs(self.env.state)
 
     def _step(self, a):
-        env_obs = self.env.take_action(a)
+        for i, action in enumerate(a):
+            self.env.take_cached_action(i, self.act_map[action])
+        env_obs = self.env.update_state()
+        obs = self.env.state
         reward = env_obs.reward
-        observation = env_obs.next_state
-        done = observation.is_terminal()
+        done = obs.is_terminal()
+        obs = self._proc_obs(obs)
         info = {}
-        return observation, reward, done, info
+
+        return obs, reward, done, info
+
+    def _proc_obs(self, obs):
+        screens = []
+        positions = []
+        for idx in range(*self.predator_idx_rng):
+            pos = np.array(obs.get_object_pos(idx))
+            screen = cv2.cvtColor(self.env.renderer.get_po_screenshot(pos, 2), cv2.COLOR_BGR2GRAY)
+            screens.append(cv2.resize(screen, (self.res, self.res)))
+            positions.append(pos)
+        screens = [screen.reshape((self.res, self.res, 1)) for screen in screens]
+        obs = list(zip(screens, positions))
+
+        return obs
 
 
 class WarpFrame(gym.ObservationWrapper):
@@ -179,19 +198,20 @@ def wrap_ma_doom(config, nplayers, port):
     env = MaxAndSkipEnv(env, nplayers)
     return env
 
-def wrap_predator_prey(config):
+def wrap_predator_prey(map_path, frame_skip=2, npredator=3, nprey=3, nobstacle=8):
     object_size = {
-        "PREDATOR": config.npredator,
-        "PREY": config.nprey,
-        "OBSTACLE": config.nobstacle
+        "PREDATOR": npredator,
+        "PREY": nprey,
+        "OBSTACLE": nobstacle
     }
-    print(config.map_path)
     env_options = PredatorPreyEnvironmentOptions(
-                        map_path=config.map_path,
+                        map_path=map_path,
                         object_size=object_size,
-                        ai_frame_skip=config.frame_skip
+                        ai_frame_skip=frame_skip
                   )
-    env = GymPredatorPreySyncMultiPlayerEnvironment(env_options)
+    env =  GymPredatorPreySyncMultiPlayerEnvironment(env_options)
+
+    return env
 
 
 
@@ -204,12 +224,15 @@ def main():
     config.nobstacle = 8
     config.map_path = "data/map/predator_prey/predator_prey_15x15.tmx"
     config.frame_skip = 2
+    config.res = 84
     env = wrap_predator_prey(config)
     env.reset()
 
     for i in range(10):
-        obs, reward, done, info = env.step(0)
-        print("{}, {}, {}, {}".format(obs, reward, done, info))
+        obs, reward, done, info = env.step([0, 0, 0])
+        for o in obs:
+            print(o[0].shape)
+            print(o[1])
 
 
 

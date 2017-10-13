@@ -46,15 +46,13 @@ class MANMapPolicy(object):
             h4 = tf.reshape(h4, [nbatch, nplayers, -1])
 
             context = tf.reshape(context, [nbatch, nplayers, -1])
-            rs = tf.reshape(rs, [nbatch, nplayers, -1])
             ws = tf.reshape(ws, [nbatch, nplayers, -1])
 
             # compute pi, vaule for each agents
-            print(ws)
 
             _reuse = False
             for i in range(nplayers):
-                h5 = fc(tf.concat([context[:, i], rs[:, i], ws[:, i]], axis=1), 'fc-pi', nh=512, init_scale=np.sqrt(2), reuse=_reuse)
+                h5 = fc(tf.concat([context[:, i], rs, ws[:, i]], axis=1), 'fc-pi', nh=512, init_scale=np.sqrt(2), reuse=_reuse)
                 pi = fc(h5, 'pi', nact, act=tf.identity, reuse=_reuse)
                 vf = fc(h5, 'v', 1, act=tf.identity, reuse=_reuse)
                 pis.append(pi)
@@ -66,20 +64,22 @@ class MANMapPolicy(object):
         v0 = vf
         a0 = sample(pi)
 
-        self.init_state = np.zeros([nbatch,]+map_size, dtype=np.float32)
+        self.init_state = []
+        self.init_map = np.zeros([nbatch,]+map_size, dtype=np.float32)
 
         def step(ob, maps, coords):
             a, v, m = sess.run([a0, v0, map_new], {X:ob, MAP:maps, C:coords})
             a = [a[i:i+nplayers] for i in range(0, len(a), nplayers)]
             v = [v[i:i+nplayers] for i in range(0, len(v), nplayers)]
-            return a, v, m, [] # dummy recon
+            return a, v, [], m # dummy state
 
-        def value(ob, state, mask):
-            v = sess.run(v0, {X:ob, S:state, M:mask})
+        def value(ob, maps, coords):
+            v = sess.run(v0, {X:ob, MAP:maps, C:coords})
             v = [v[i:i+nplayers] for i in range(0, len(v), nplayers)]
             return v
 
         self.X = X
+        self.C = C
         self.MAP = MAP # to meet the a2c.py protocol.
         self.pi = pi
         self.vf = vf
