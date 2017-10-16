@@ -3,55 +3,42 @@ import numpy as np
 from multiprocessing import Process, Pipe
 from baselines.common.vec_env import VecEnv
 
-def step(env, data, dfn):
+def step(env, data, dfn, nplayers):
     ob, reward, done, info = env.step(data)
-    check_done = dfn(done)
-    if check_done:
+    if done:
         ob = env.reset()
+    reward = [reward] * nplayers
+    done = [done] * nplayers
     return (ob, reward, done, info)
 
 def worker(remote, env_fn_wrapper):
 
     env = env_fn_wrapper.x()
     dfn = env_fn_wrapper.dfn # function to determine done. It's either any() or all().
+    nplayers = env_fn_wrapper.nplayers
     while True:
         cmd, data = remote.recv()
-        try:
-            if cmd == 'step':
-                remote.send(step(env, data, dfn))
-            elif cmd == 'reset':
-                ob = env.reset()
-                remote.send(ob)
-            elif cmd == 'close':
-                remote.close()
-                break
-            elif cmd == 'get_spaces':
-                remote.send((env.action_space, env.observation_space))
-            else:
-                raise NotImplementedError
-        except:
-            # crashed, reinstantiate
-            env = env_fn_wrapper.x()
+        if cmd == 'step':
+            remote.send(step(env, data, dfn, nplayers))
+        elif cmd == 'reset':
             ob = env.reset()
-            if cmd == 'step':
-                remote.send(step(env, data, dfn))
-            elif cmd == 'reset':
-                remote.send(ob)
-            elif cmd == 'close':
-                remote.close()
-                break
-            elif cmd == 'get_spaces':
-                remote.send((env.action_space, env.observation_space))
-            else:
-                break
+            remote.send(ob)
+        elif cmd == 'close':
+            remote.close()
+            break
+        elif cmd == 'get_spaces':
+            remote.send((env.action_space, env.observation_space))
+        else:
+            raise NotImplementedError
 
 class CloudpickleWrapper(object):
     """
     Uses cloudpickle to serialize contents (otherwise multiprocessing tries to use pickle)
     """
-    def __init__(self, x, dfn):
+    def __init__(self, x, dfn, nplayers):
         self.x = x
         self.dfn = dfn
+        self.nplayers = nplayers
     def __getstate__(self):
         import cloudpickle
         return cloudpickle.dumps(self.x)
@@ -60,13 +47,13 @@ class CloudpickleWrapper(object):
         self.x = pickle.loads(ob)
 
 class SubprocVecEnv(VecEnv):
-    def __init__(self, env_fns, dfn):
+    def __init__(self, env_fns, dfn, nplayers=2):
         """
         envs: list of gym environments to run in subprocesses
         """
         nenvs = len(env_fns)
         self.remotes, self.work_remotes = zip(*[Pipe() for _ in range(nenvs)])
-        self.ps = [Process(target=worker, args=(work_remote, CloudpickleWrapper(env_fn, dfn)))
+        self.ps = [Process(target=worker, args=(work_remote, CloudpickleWrapper(env_fn, dfn, nplayers)))
             for (work_remote, env_fn) in zip(self.work_remotes, env_fns)]
         for p in self.ps:
             p.start()

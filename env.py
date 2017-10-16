@@ -77,10 +77,12 @@ class GymPredatorPreySyncMultiPlayerEnvironment(gym.Env):
     metadata = {'render.modes': ['human', 'rgb_array']}
     act_map = ["MOVE_RIGHT", "MOVE_UP", "MOVE_LEFT", "MOVE_DOWN", "STAND"]
 
-    def __init__(self, env_options, res=84):
+    def __init__(self, env_options, res=84, step_penalty=0, po_radius=3):
         # Create the environment
         self.env = PredatorPreyEnvironment(env_options=env_options)
         self.res = res
+        self.po_radius = po_radius
+        self.step_penalty = step_penalty
 
         # Get action space
         self.action_space = spaces.Discrete(len(self.env.actions))
@@ -101,7 +103,7 @@ class GymPredatorPreySyncMultiPlayerEnvironment(gym.Env):
             self.env.take_cached_action(i, self.act_map[action])
         env_obs = self.env.update_state()
         obs = self.env.state
-        reward = env_obs.reward
+        reward = env_obs.reward if env_obs.reward != 0 else self.step_penalty
         done = obs.is_terminal()
         obs = self._proc_obs(obs)
         info = {}
@@ -113,7 +115,7 @@ class GymPredatorPreySyncMultiPlayerEnvironment(gym.Env):
         positions = []
         for idx in range(*self.predator_idx_rng):
             pos = np.array(obs.get_object_pos(idx))
-            screen = cv2.cvtColor(self.env.renderer.get_po_screenshot(pos, 2), cv2.COLOR_BGR2GRAY)
+            screen = cv2.cvtColor(self.env.renderer.get_po_screenshot(pos, self.po_radius), cv2.COLOR_BGR2GRAY)
             screens.append(cv2.resize(screen, (self.res, self.res)))
             positions.append(pos)
         screens = [screen.reshape((self.res, self.res, 1)) for screen in screens]
@@ -198,7 +200,7 @@ def wrap_ma_doom(config, nplayers, port):
     env = MaxAndSkipEnv(env, nplayers)
     return env
 
-def wrap_predator_prey(map_path, frame_skip=2, npredator=3, nprey=3, nobstacle=8):
+def wrap_predator_prey(map_path, frame_skip=2, npredator=3, nprey=3, nobstacle=8, po_radius=2):
     object_size = {
         "PREDATOR": npredator,
         "PREY": nprey,
@@ -209,11 +211,9 @@ def wrap_predator_prey(map_path, frame_skip=2, npredator=3, nprey=3, nobstacle=8
                         object_size=object_size,
                         ai_frame_skip=frame_skip
                   )
-    env =  GymPredatorPreySyncMultiPlayerEnvironment(env_options)
+    env =  GymPredatorPreySyncMultiPlayerEnvironment(env_options, po_radius=po_radius)
 
     return env
-
-
 
 def main():
     import argparse

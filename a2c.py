@@ -15,6 +15,7 @@ from baselines.common.atari_wrappers import wrap_deepmind
 from utils import discount_with_dones
 from utils import Scheduler, make_path, find_trainable_variables
 from utils import cat_entropy, mse
+
 TINY = 1e-8
 
 class Model(object):
@@ -38,6 +39,7 @@ class Model(object):
 
         step_model = policy(sess, ob_space, ac_space, nenvs, 1, nstack, nplayers, reuse=False)
         train_model = policy(sess, ob_space, ac_space, nenvs, nsteps, nstack, nplayers, reuse=True)
+        eval_model = policy(sess, ob_space, ac_space, 1, 1, nstack, nplayers, reuse=True)
 
         neglogpac = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=train_model.pi, labels=A)
         pg_loss = tf.reduce_mean(ADV * neglogpac)
@@ -60,7 +62,7 @@ class Model(object):
             advs = rewards - values
             for step in range(len(obs)):
                 cur_lr = lr.value()
-            tensors = [pg_loss, vf_loss, entropy, _train, self.summary_op]
+            tensors = [pg_loss, vf_loss, entropy, _train]
             td_map = {train_model.X:obs, A:actions, ADV:advs, R:rewards, LR:cur_lr}
             if maps != []:
                 td_map[train_model.MAP] = maps
@@ -68,11 +70,11 @@ class Model(object):
             if states != []:
                 td_map[train_model.S] = states
                 td_map[train_model.M] = masks
-            policy_loss, value_loss, policy_entropy, _, summary = sess.run(
+            policy_loss, value_loss, policy_entropy, _ = sess.run(
                     tensors,
                     td_map
             )
-            return policy_loss, value_loss, policy_entropy, summary
+            return policy_loss, value_loss, policy_entropy
 
         def save(save_path, postfix):
             ps = sess.run(params)
@@ -90,12 +92,14 @@ class Model(object):
         self.train_model = train_model
         self.step_model = step_model
         self.step = step_model.step
+        self.eval_step = eval_model.step
         self.value = step_model.value
         self.init_state = step_model.init_state
         self.init_map = step_model.init_map
         self.save = save
         self.load = load
         tf.global_variables_initializer().run(session=sess)
+        """
         for var in tf.trainable_variables():
             tf.summary.histogram(var.name, var)
         for grad, var in grads:
@@ -105,9 +109,32 @@ class Model(object):
         tf.summary.scalar("vf_loss",  vf_loss)
         tf.summary.scalar("pred_rewd", tf.reduce_mean(self.train_model.vf))
         tf.summary.scalar("mean_rewd", tf.reduce_mean(R))
+        tf.summary.scalar("max_rewd", tf.reduce_max(R))
         self.summary_op = tf.summary.merge_all()
+        """
 
+class StackFrame(object):
 
+    def __init__(self, nenv, nplayers, nstack, obs_shape):
+        self.nenv = nenv
+        self.nplayers = nplayers
+        self.obs_shape = obs_shape
+        nh, nw, nc = obs_shape
+        self.obs = np.zeros((nenv, nplayers, nh, nw, nc*nstack), np.uint8)
+        self.coords = np.zeros((nenv, nplayers, 2), dtype=np.uint8)
+
+    def update_obs(self, obs):
+        nc = self.obs_shape[-1]
+        if obs.shape[-1] == 2:
+            coords = obs[:, :, 1][0]
+            obs = obs[:, :, 0][0]
+            obs = np.stack(obs)
+            coords = np.stack(coords)
+            self.coords = np.roll(self.coords, shift=-2, axis=2)
+            self.coords[:, :, -2:] = coords
+
+        self.obs = np.roll(self.obs, shift=-nc, axis=4)
+        self.obs[:, :, :, :, -nc:] = obs
 
 class Runner(object):
 
@@ -117,14 +144,14 @@ class Runner(object):
         self.obs_shape = env.observation_space.shape
         nh, nw, nc = self.obs_shape
         self.nenv = nenv = env.num_envs
+        self.nstack = nstack
 
         self.nplayers = nplayers
         self.batch_ob_shape = (nenv*nsteps, nplayers, nh, nw, nc*nstack)
-        self.obs = np.zeros((nenv, nplayers, nh, nw, nc*nstack), dtype=np.uint8)
-        self.coords = np.zeros((nenv, nplayers, 2), dtype=np.uint8)
+        self.sf = StackFrame(nenv, nplayers, nstack, self.obs_shape)
 
         obs = env.reset()
-        self.update_obs(obs)
+        self.sf.update_obs(obs)
         self.gamma = gamma
         self.nsteps = nsteps
         self.states = model.init_state
@@ -132,26 +159,36 @@ class Runner(object):
         self.map_size = map_size if model.init_map != [] else [-1]
         self.dones = [[False for x in range(nplayers)] for _ in range(nenv)]
 
-    def update_obs(self, obs):
-        nc = self.obs_shape[-1]
-        if obs.shape[-1] == 2:
-            coords = obs[:, :, 1][0]
-            obs = obs[:, :, 0][0]
-            obs = np.stack(obs)
-            coords = np.stack(coords)
+    def eval(self, env, eps=10):
+        sf = StackFrame(1, self.nplayers, self.nstack, self.obs_shape)
+        m = np.zeros([1,]+self.map_size) if self.map_size != [-1] else []
+        obs = np.array([env.reset()])
+        rewards = []
 
-        self.obs = np.roll(self.obs, shift=-nc, axis=4)
-        self.coords = np.roll(self.coords, shift=-2, axis=2)
-        self.obs[:, :, :, :, -nc:] = obs
-        self.coords[:, :, -2:] = coords
+        for i in range(eps):
+            eps_reward = 0
+            while True:
+                sf.update_obs(obs)
+                a, v, _, m = self.model.eval_step(sf.obs, m, sf.coords)
+                o, r, d, _ = env.step(a[0])
+                obs = np.array([o])
+                eps_reward += r
+
+                if d:
+                    sf.obs[:] = 0
+                    sf.coords[:] = 0
+                    obs = np.array([env.reset()])
+                    rewards.append(eps_reward)
+                    break
+        return np.mean(np.array(rewards))
 
     def run(self):
         mb_obs, mb_maps, mb_coords, mb_states, mb_rewards, mb_actions, mb_values, mb_dones = [], [], [], [], [], [], [], []
         for n in range(self.nsteps):
             #actions, values, states = self.model.step(self.obs, self.states, self.dones)
-            actions, values, states, maps = self.model.step(self.obs, self.maps, self.coords)
-            mb_obs.append(np.copy(self.obs))
-            mb_coords.append(np.copy(self.coords))
+            actions, values, states, maps = self.model.step(self.sf.obs, self.maps, self.sf.coords)
+            mb_obs.append(np.copy(self.sf.obs))
+            mb_coords.append(np.copy(self.sf.coords))
             mb_actions.append(actions)
             mb_values.append(values)
             mb_dones.append(self.dones)
@@ -162,10 +199,11 @@ class Runner(object):
             # the inner loop is per-player done
             for i, done in enumerate(dones):
                 if done[0]:
-                    self.obs[i, :] = self.obs[i, :]*0
+                    self.sf.obs[i, :] = self.sf.obs[i, :]*0
+                    self.sf.coords[i, :] = self.sf.coords[i, :]*0
                     if self.maps != []:
                         self.maps[i] = self.maps[i]*0
-            self.update_obs(obs)
+            self.sf.update_obs(obs)
             mb_states.append(np.copy(self.states))
             mb_maps.append(np.copy(maps))
             mb_rewards.append(rewards)
@@ -181,7 +219,7 @@ class Runner(object):
         mb_dones = np.asarray(mb_dones, dtype=np.bool).swapaxes(1, 0).swapaxes(2, 1)
         mb_masks = mb_dones[:, :, :-1]
         mb_dones = mb_dones[:, :, 1:]
-        last_values = self.model.value(self.obs, self.maps, self.coords)
+        last_values = self.model.value(self.sf.obs, self.maps, self.sf.coords)
         #discount/bootstrap off value fn
         for i, (rewards, dones, value) in enumerate(zip(mb_rewards, mb_dones, last_values)):
             rewards = rewards.tolist()
@@ -211,10 +249,10 @@ class Runner(object):
 
         return mb_obs, mb_maps, mb_coords, mb_states, mb_rewards, mb_masks, mb_actions, mb_values
 
-def learn(policy, env, seed, checkpoint=0, nsteps=8, nstack=8, nplayers=2,
+def learn(policy, env, seed, checkpoint=0, nsteps=8, nstack=4, nplayers=2,
         total_timesteps=int(80e6), vf_coef=0.5, ent_coef=0.01,
-        max_grad_norm=0.5, lr=4e-4, lrschedule='linear',
-        epsilon=1e-5, alpha=0.99, gamma=0.99, log_interval=20, save_interval=20):
+        max_grad_norm=0.5, lr=1e-3, lrschedule='linear',
+        epsilon=1e-5, alpha=0.99, gamma=0.99, log_interval=10, save_interval=200, eval_env_fn=None):
     tf.reset_default_graph()
     set_global_seeds(seed)
 
@@ -235,26 +273,28 @@ def learn(policy, env, seed, checkpoint=0, nsteps=8, nstack=8, nplayers=2,
     tstart = time.time()
     reward_hist = np.array([])
     logs_path = "log/" + policy.__name__
-    summary_writer = tf.summary.FileWriter(logs_path, graph=tf.get_default_graph())
+    # summary_writer = tf.summary.FileWriter(logs_path, graph=tf.get_default_graph())
     if checkpoint != 0:
         print("load from {}".format(checkpoint))
         load_path = logs_path + "/model" + str(checkpoint) + ".pkl"
         model.load(load_path)
     current_ckpt = checkpoint
 
+    logger.configure(logs_path, format_strs=["tensorboard", "stdout"])
+
+    acc_pg_loss, acc_v_loss, acc_pent, acc_rewards = [], [], [], []
 
     for update in range(1, total_timesteps//nbatch+1):
         # Collect batch of samples
         obs, maps, coords, states, rewards, masks, actions, values = runner.run()
         # Train on batch
-        policy_loss, value_loss, policy_entropy, summary = model.train(obs, maps, coords, states, rewards, masks, actions, values)
+        policy_loss, value_loss, policy_entropy = model.train(obs, maps, coords, states, rewards, masks, actions, values)
         nseconds = time.time()-tstart
         fps = int((update*nbatch)/nseconds)
         current_ckpt += 1
 
         # reshape to obtain the score of each agent
         if update % log_interval == 0 or update == 1:
-            summary_writer.add_summary(summary, update)
             ev = explained_variance(values, rewards)
             logger.record_tabular("nupdates", update)
             logger.record_tabular("total_timesteps", update*nbatch)
@@ -266,9 +306,11 @@ def learn(policy, env, seed, checkpoint=0, nsteps=8, nstack=8, nplayers=2,
             for i in range(nplayers):
                 logger.record_tabular("max_reward_%d" % i, float(np.max(rewards[:, i])))
                 logger.record_tabular("mean_reward_%d (over 100 updates)" % i, float(np.mean(rewards[:, i])))
-            logger.dump_tabular()
             if update % (log_interval * save_interval) == 0:
+                avg_reward = runner.eval(eval_env_fn())
+                logger.record_tabular("eval_reward", avg_reward)
                 model.save(logs_path, current_ckpt)
+            logger.dump_tabular()
     env.close()
     model.save(logs_path, current_ckpt)
     return current_ckpt

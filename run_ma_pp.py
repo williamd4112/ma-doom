@@ -22,24 +22,25 @@ def train(config, num_frames, seed, policy, lrschedule, num_cpu, ckpt, nsteps, d
             return wrap_predator_prey(**config)
         return _thunk
     set_global_seeds(seed)
-    env = SubprocVecEnv([make_env(i) for i in range(num_cpu)], dfn)
+    env = SubprocVecEnv([make_env(i) for i in range(num_cpu)], dfn, nplayers=config["npredator"])
     if policy == 'nmap':
         policy_fn = MANMapPolicy
     elif policy == 'cnn':
         policy_fn = MACnnPolicy
     elif policy == 'lnlstm':
         raise NotImplemented
-    time.sleep(num_cpu * 1)
+    time.sleep(num_cpu * 0.5)
     print("creation complete, start running!")
     return learn(policy_fn, env, seed, nplayers=config["npredator"],
-            nsteps=nsteps, checkpoint=ckpt, total_timesteps=num_timesteps, lrschedule=lrschedule)
+            nsteps=nsteps, checkpoint=ckpt, total_timesteps=num_timesteps, lrschedule=lrschedule, eval_env_fn=make_env(0))
 
 def main():
     import argparse
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--map-path', help='map path', default='data/map/predator_prey/predator_prey_15x15.tmx')
     parser.add_argument('--npredator', help='number of predators', type=int, default=3)
-    parser.add_argument('--nprey', help='number of predators', type=int, default=3)
+    parser.add_argument('--nprey', help='number of preys', type=int, default=3)
+    parser.add_argument('--radius', help='po radius', type=int, default=2)
     parser.add_argument('--nobstacle', help='number of predators', type=int, default=8)
     parser.add_argument('--frame_skip', help='number of predators', type=int, default=1)
     parser.add_argument('--seed', help='RNG seed', type=int, default=0)
@@ -49,7 +50,7 @@ def main():
     parser.add_argument('--policy', help='Policy architecture', choices=['cnn', 'nmap'], default='nmap')
     parser.add_argument('--lrschedule', help='Learning rate schedule', choices=['constant', 'linear'], default='constant')
     parser.add_argument('--thousand_frames', help='How many frames to train (/ 1e3). '
-        'This number gets divided by 4 due to frameskip', type=int, default=600)
+        'This number gets divided by 4 due to frameskip', type=int, default=100000)
     args = parser.parse_args()
     print(args)
     current_ckpt = args.ckpt
@@ -58,7 +59,8 @@ def main():
                 "nprey": args.nprey,
                 "npredator": args.npredator,
                 "nobstacle": args.nobstacle,
-                "frame_skip": args.frame_skip
+                "frame_skip": args.frame_skip,
+                "po_radius": args.radius
     }
 
     while True:

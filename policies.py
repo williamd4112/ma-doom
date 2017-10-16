@@ -63,12 +63,14 @@ class MANMapPolicy(object):
 
         v0 = vf
         a0 = sample(pi)
+        a_max = tf.argmax(pi, 1)
 
         self.init_state = []
         self.init_map = np.zeros([nbatch,]+map_size, dtype=np.float32)
 
-        def step(ob, maps, coords):
-            a, v, m = sess.run([a0, v0, map_new], {X:ob, MAP:maps, C:coords})
+        def step(ob, maps, coords, training=True):
+            pi_op = a0 if training else a_max
+            a, v, m = sess.run([pi_op, v0, map_new], {X:ob, MAP:maps, C:coords})
             a = [a[i:i+nplayers] for i in range(0, len(a), nplayers)]
             v = [v[i:i+nplayers] for i in range(0, len(v), nplayers)]
             return a, v, [], m # dummy state
