@@ -99,7 +99,7 @@ class GymPredatorPreySyncMultiPlayerEnvironment(gym.Env):
         return self._proc_obs(self.env.state)
 
     def _step(self, a):
-        for i, action in enumerate(a):
+        for i, action in zip(self.predator_idx_rng, a):
             self.env.take_cached_action(i, self.act_map[action])
         env_obs = self.env.update_state()
         obs = self.env.state

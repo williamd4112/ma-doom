@@ -126,12 +126,9 @@ class StackFrame(object):
     def update_obs(self, obs):
         nc = self.obs_shape[-1]
         if obs.shape[-1] == 2:
-            coords = obs[:, :, 1][0]
-            obs = obs[:, :, 0][0]
-            obs = np.stack(obs)
-            coords = np.stack(coords)
-            self.coords = np.roll(self.coords, shift=-2, axis=2)
-            self.coords[:, :, -2:] = coords
+            coords = np.asarray(obs[:,:, 1].tolist())
+            obs = np.asarray(obs[:, :, 0].tolist())
+            self.coords = coords
 
         self.obs = np.roll(self.obs, shift=-nc, axis=4)
         self.obs[:, :, :, :, -nc:] = obs
@@ -159,7 +156,7 @@ class Runner(object):
         self.map_size = map_size if model.init_map != [] else [-1]
         self.dones = [[False for x in range(nplayers)] for _ in range(nenv)]
 
-    def eval(self, env, eps=10):
+    def eval(self, env, eps=20):
         sf = StackFrame(1, self.nplayers, self.nstack, self.obs_shape)
         m = np.zeros([1,]+self.map_size) if self.map_size != [-1] else []
         obs = np.array([env.reset()])
@@ -249,9 +246,9 @@ class Runner(object):
 
         return mb_obs, mb_maps, mb_coords, mb_states, mb_rewards, mb_masks, mb_actions, mb_values
 
-def learn(policy, env, seed, checkpoint=0, nsteps=8, nstack=4, nplayers=2,
-        total_timesteps=int(80e6), vf_coef=0.5, ent_coef=0.01,
-        max_grad_norm=0.5, lr=1e-3, lrschedule='linear',
+def learn(policy, env, seed, logs_path, checkpoint=0, nsteps=8, nstack=4, nplayers=2,
+        total_timesteps=int(80e6), vf_coef=0.6, ent_coef=0.01,
+        max_grad_norm=0.5, lr=25e-4, lrschedule='linear',
         epsilon=1e-5, alpha=0.99, gamma=0.99, log_interval=10, save_interval=200, eval_env_fn=None):
     tf.reset_default_graph()
     set_global_seeds(seed)
@@ -272,7 +269,7 @@ def learn(policy, env, seed, checkpoint=0, nsteps=8, nstack=4, nplayers=2,
     nbatch = nenvs*nsteps
     tstart = time.time()
     reward_hist = np.array([])
-    logs_path = "log/" + policy.__name__
+    # logs_path = "log/" + policy.__name__
     # summary_writer = tf.summary.FileWriter(logs_path, graph=tf.get_default_graph())
     if checkpoint != 0:
         print("load from {}".format(checkpoint))
@@ -283,6 +280,7 @@ def learn(policy, env, seed, checkpoint=0, nsteps=8, nstack=4, nplayers=2,
     logger.configure(logs_path, format_strs=["tensorboard", "stdout"])
 
     acc_pg_loss, acc_v_loss, acc_pent, acc_rewards = [], [], [], []
+    eval_env = eval_env_fn()
 
     for update in range(1, total_timesteps//nbatch+1):
         # Collect batch of samples
@@ -293,24 +291,26 @@ def learn(policy, env, seed, checkpoint=0, nsteps=8, nstack=4, nplayers=2,
         fps = int((update*nbatch)/nseconds)
         current_ckpt += 1
 
+        acc_pg_loss.append(policy_loss)
+        acc_v_loss.append(value_loss)
+        acc_pent.append(policy_entropy)
+        acc_rewards.append(rewards)
         # reshape to obtain the score of each agent
         if update % log_interval == 0 or update == 1:
-            ev = explained_variance(values, rewards)
-            logger.record_tabular("nupdates", update)
+            logger.record_tabular("nupdates", current_ckpt)
             logger.record_tabular("total_timesteps", update*nbatch)
             logger.record_tabular("fps", fps)
-            logger.record_tabular("policy_entropy", float(policy_entropy))
-            logger.record_tabular("value_loss", float(value_loss))
-            logger.record_tabular("explained variance", float(ev))
-            rewards = rewards.reshape(-1, nplayers)
-            for i in range(nplayers):
-                logger.record_tabular("max_reward_%d" % i, float(np.max(rewards[:, i])))
-                logger.record_tabular("mean_reward_%d (over 100 updates)" % i, float(np.mean(rewards[:, i])))
+            logger.record_tabular("policy_entropy", float(np.mean(acc_pent)))
+            logger.record_tabular("vloss", float(np.mean(acc_v_loss)))
+            logger.record_tabular("ploss", float(np.mean(acc_pg_loss)))
+            logger.record_tabular("max_reward", float(np.max(acc_rewards)))
+            logger.record_tabular("mean_reward", float(np.mean(acc_rewards)))
             if update % (log_interval * save_interval) == 0:
-                avg_reward = runner.eval(eval_env_fn())
-                logger.record_tabular("eval_reward", avg_reward)
+                avg_reward = runner.eval(eval_env)
+                logger.record_tabular("eval_eps_reward", avg_reward)
                 model.save(logs_path, current_ckpt)
             logger.dump_tabular()
+            acc_pg_loss, acc_v_loss, acc_pent, acc_rewards = [], [], [], []
     env.close()
     model.save(logs_path, current_ckpt)
     return current_ckpt

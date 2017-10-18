@@ -103,7 +103,10 @@ def _ln(x, g, b, e=1e-5, axes=[1]):
     x = x*g+b
     return x
 
-def nmap(xs, s, coords, scope, nplayers=2, n=15, feat=32, init_scale=1.0,  activation=tf.nn.relu, reuse=False):
+def swish(x):
+    return x * tf.nn.sigmoid(x)
+
+def nmap(xs, s, coords, scope, nplayers=2, n=15, feat=32, init_scale=1.0, act=tf.nn.relu, reuse=False):
     nbatch, nin = [v.value for v in xs[0].get_shape()]
     # s should be of shape [nbatch, n, n]
     with tf.variable_scope(scope, reuse=reuse):
@@ -117,6 +120,7 @@ def nmap(xs, s, coords, scope, nplayers=2, n=15, feat=32, init_scale=1.0,  activ
 
     _reuse = reuse
     ws = []
+
     for i, (x, coord) in enumerate(zip(xs, coords)):
         """
         q = fc(tf.concat([x, r5], axis=1), "c-query", nh=feat, init_scale=init_scale, reuse=_reuse)
@@ -141,6 +145,7 @@ def nmap(xs, s, coords, scope, nplayers=2, n=15, feat=32, init_scale=1.0,  activ
         _reuse = True
         ws.append(w)
         xs[i] = c
+
 
     return xs, r5, ws, mem_new
 
