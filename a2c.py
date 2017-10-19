@@ -63,10 +63,9 @@ class Model(object):
             for step in range(len(obs)):
                 cur_lr = lr.value()
             tensors = [pg_loss, vf_loss, entropy, _train]
-            td_map = {train_model.X:obs, A:actions, ADV:advs, R:rewards, LR:cur_lr}
+            td_map = {train_model.X:obs, A:actions, ADV:advs, R:rewards, LR:cur_lr, train_model.C:coords}
             if maps != []:
                 td_map[train_model.MAP] = maps
-                td_map[train_model.C] = coords
             if states != []:
                 td_map[train_model.S] = states
                 td_map[train_model.M] = masks
@@ -183,7 +182,7 @@ class Runner(object):
         mb_obs, mb_maps, mb_coords, mb_states, mb_rewards, mb_actions, mb_values, mb_dones = [], [], [], [], [], [], [], []
         for n in range(self.nsteps):
             #actions, values, states = self.model.step(self.obs, self.states, self.dones)
-            actions, values, states, maps = self.model.step(self.sf.obs, self.maps, self.sf.coords)
+            actions, values, states, maps = self.model.step(self.sf.obs, maps=self.maps, coords=self.sf.coords)
             mb_obs.append(np.copy(self.sf.obs))
             mb_coords.append(np.copy(self.sf.coords))
             mb_actions.append(actions)
@@ -216,7 +215,7 @@ class Runner(object):
         mb_dones = np.asarray(mb_dones, dtype=np.bool).swapaxes(1, 0).swapaxes(2, 1)
         mb_masks = mb_dones[:, :, :-1]
         mb_dones = mb_dones[:, :, 1:]
-        last_values = self.model.value(self.sf.obs, self.maps, self.sf.coords)
+        last_values = self.model.value(self.sf.obs, maps=self.maps, coords=self.sf.coords)
         #discount/bootstrap off value fn
         for i, (rewards, dones, value) in enumerate(zip(mb_rewards, mb_dones, last_values)):
             rewards = rewards.tolist()

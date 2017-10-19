@@ -47,12 +47,13 @@ class MANMapPolicy(object):
 
             context = tf.reshape(context, [nbatch, nplayers, -1])
             ws = tf.reshape(ws, [nbatch, nplayers, -1])
+            crds = tf.cast(C, tf.float32)
 
             # compute pi, vaule for each agents
 
             _reuse = False
             for i in range(nplayers):
-                h5 = fc(tf.concat([context[:, i], rs, ws[:, i]], axis=1), 'fc-pi', nh=512, init_scale=np.sqrt(2), reuse=_reuse, act=swish)
+                h5 = fc(tf.concat([context[:, i], crds[:, i], rs, ws[:, i]], axis=1), 'fc-pi', nh=512, init_scale=np.sqrt(2), reuse=_reuse, act=swish)
                 pi = fc(h5, 'pi', nact, act=tf.identity, reuse=_reuse)
                 vf = fc(h5, 'v', 1, act=tf.identity, reuse=_reuse)
                 pis.append(pi)
@@ -166,18 +167,20 @@ class MACommPolicy(object):
 
 class MACnnPolicy(object):
     def __init__(self, sess, ob_space, ac_space, nenv,
-                    nsteps, nstack, nplayers, reuse=False):
+                    nsteps, nstack, nplayers, map_size=[15,15,32], reuse=False):
         nbatch = nenv * nsteps
         nh, nw, nc = ob_space.shape
         ob_shape = (nbatch, nplayers, nh, nw, nc*nstack)
         nact = ac_space.n
         X = tf.placeholder(tf.uint8, ob_shape) #obs
+        C = tf.placeholder(tf.int32, [nbatch, nplayers, 2])
 
         pis = []
         vfs = []
 
         with tf.variable_scope("model", reuse=reuse):
             x = tf.reshape(tf.cast(X, tf.float32)/255., [nbatch*nplayers, nh, nw, nc*nstack])
+            crds = tf.cast(C, tf.float32) / map_size[0]
             h = conv(x, 'c1', nf=32, rf=8, stride=4, init_scale=np.sqrt(2))
             h2 = conv(h, 'c2', nf=64, rf=4, stride=2, init_scale=np.sqrt(2))
             h3 = conv(h2, 'c3', nf=64, rf=3, stride=1, init_scale=np.sqrt(2))
@@ -186,6 +189,7 @@ class MACnnPolicy(object):
             h5 = fc(h4, 'fc2', nh=512, init_scale=np.sqrt(2))
             h6 = fc(h5, 'fc3', nh=256, init_scale=np.sqrt(2)) # to give compatible network size
             h6 = tf.reshape(h6, [nbatch, nplayers, -1])
+            h6 = tf.concat([h6, crds], axis=2)
 
             _reuse = False
             for i in range(nplayers):
@@ -204,18 +208,19 @@ class MACnnPolicy(object):
         self.init_state = []
 
 
-        def step(ob, *_args, **_kwargs):
-            a, v = sess.run([a0, v0], {X:ob})
+        def step(ob, coords, *_args, **_kwargs):
+            a, v = sess.run([a0, v0], {X:ob, C:coords})
             a = [a[i:i+nplayers] for i in range(0, len(a), nplayers)]
             v = [v[i:i+nplayers] for i in range(0, len(v), nplayers)]
             return a, v, [], [] #dummy state and recon
 
-        def value(ob, *_args, **_kwargs):
-            v = sess.run(v0, {X:ob})
+        def value(ob, coords, *_args, **_kwargs):
+            v = sess.run(v0, {X:ob, C:coords})
             v = [v[i:i+nplayers] for i in range(0, len(v), nplayers)]
             return v
 
         self.X = X
+        self.C = C
         self.pi = pi
         self.vf = vf
         self.step = step
