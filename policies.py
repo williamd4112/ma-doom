@@ -52,7 +52,7 @@ class MANMapPolicy(object):
 
             _reuse = False
             for i in range(nplayers):
-                h5 = fc(tf.concat([context[:, i], rs, ws[:, i]], axis=1), 'fc-pi', nh=512, init_scale=np.sqrt(2), reuse=_reuse)
+                h5 = fc(tf.concat([context[:, i], rs, ws[:, i]], axis=1), 'fc-pi', nh=512, init_scale=np.sqrt(2), reuse=_reuse, act=swish)
                 pi = fc(h5, 'pi', nact, act=tf.identity, reuse=_reuse)
                 vf = fc(h5, 'v', 1, act=tf.identity, reuse=_reuse)
                 pis.append(pi)

@@ -31,7 +31,10 @@ def train(config, num_frames, seed, policy, lrschedule, num_cpu, ckpt, nsteps, d
         raise NotImplemented
     time.sleep(num_cpu * 0.5)
     print("creation complete, start running!")
-    return learn(policy_fn, env, seed, nplayers=config["npredator"],
+
+    logs_path = "log/" + policy_fn.__name__ + "_" + str(config["po_radius"])
+
+    return learn(policy_fn, env, seed, logs_path, nplayers=config["npredator"],
             nsteps=nsteps, checkpoint=ckpt, total_timesteps=num_timesteps, lrschedule=lrschedule, eval_env_fn=make_env(0))
 
 def main():
